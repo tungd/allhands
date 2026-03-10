@@ -36,6 +36,7 @@ let create_worktree ~repo_path ~session_id =
       Error "failed to create git worktree"
 
 let remove_worktree ~repo_path ~worktree_path =
-  ignore (run_command ["git"; "-C"; repo_path; "worktree"; "remove"; "--force"; worktree_path]);
+  if Sys.file_exists repo_path && is_git_repo repo_path then
+    ignore (run_command ["git"; "-C"; repo_path; "worktree"; "remove"; "--force"; worktree_path]);
   if Sys.file_exists worktree_path then
     ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote worktree_path)))

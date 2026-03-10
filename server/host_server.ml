@@ -14,6 +14,18 @@ type t = {
   config : config;
 }
 
+type sse_sink = {
+  stream : Http_server.stream;
+  sessions : Session_store.t;
+  session_id : string;
+  mutex : Mutex.t;
+  pending : Models.stream_event Queue.t;
+  mutable subscriber_id : string option;
+  mutable replay_complete : bool;
+  mutable draining : bool;
+  mutable closed : bool;
+}
+
 let make_session_id () =
   Random.self_init ();
   Printf.sprintf "session_%08x%08x" (Random.bits ()) (Random.bits ())
@@ -56,7 +68,98 @@ let format_sse_event (event : Models.stream_event) =
     event.Models.type_
     (Yojson.Safe.to_string (Models.stream_event_to_json event))
 
-let find_session server session_id =
+let cleanup_sse_sink sink =
+  let subscriber_id, should_close =
+    Mutex.lock sink.mutex;
+    let should_close = not sink.closed in
+    let subscriber_id =
+      if sink.closed then
+        None
+      else begin
+        sink.closed <- true;
+        sink.draining <- false;
+        sink.replay_complete <- true;
+        while not (Queue.is_empty sink.pending) do
+          ignore (Queue.take sink.pending)
+        done;
+        let subscriber_id = sink.subscriber_id in
+        sink.subscriber_id <- None;
+        subscriber_id
+      end
+    in
+    Mutex.unlock sink.mutex;
+    (subscriber_id, should_close)
+  in
+  begin
+    match subscriber_id with
+    | Some id -> Session_store.unsubscribe sink.sessions sink.session_id id
+    | None -> ()
+  end;
+  if should_close then Http_server.close_stream sink.stream
+
+let write_sse_event sink event =
+  try
+    Http_server.write_stream sink.stream (format_sse_event event);
+    true
+  with exn ->
+    Log.warn (fun m -> m "SSE stream write failed for %s: %s" sink.session_id (Printexc.to_string exn));
+    cleanup_sse_sink sink;
+    false
+
+let drain_sse_sink sink =
+  let rec loop () =
+    Mutex.lock sink.mutex;
+    let next_event =
+      if sink.closed || Queue.is_empty sink.pending then begin
+        sink.draining <- false;
+        None
+      end else
+        Some (Queue.take sink.pending)
+    in
+    Mutex.unlock sink.mutex;
+    match next_event with
+    | None -> ()
+    | Some event ->
+        if write_sse_event sink event then loop ()
+  in
+  loop ()
+
+let enqueue_live_sse_event sink event =
+  Mutex.lock sink.mutex;
+  let should_drain =
+    if sink.closed then
+      false
+    else begin
+      Queue.add event sink.pending;
+      if sink.replay_complete && not sink.draining then begin
+        sink.draining <- true;
+        true
+      end else
+        false
+    end
+  in
+  Mutex.unlock sink.mutex;
+  if should_drain then drain_sse_sink sink
+
+let finish_replay sink =
+  Mutex.lock sink.mutex;
+  let should_drain =
+    if sink.closed then
+      false
+    else begin
+      sink.replay_complete <- true;
+      if Queue.is_empty sink.pending || sink.draining then
+        false
+      else begin
+        sink.draining <- true;
+        true
+      end
+    end
+  in
+  Mutex.unlock sink.mutex;
+  if should_drain then drain_sse_sink sink
+
+let find_session (server : t) session_id =
   Session_store.find_session server.sessions session_id
 
 let cleanup_session (session : Agent_session.t) =
@@ -69,7 +172,7 @@ let cleanup_session (session : Agent_session.t) =
     ~repo_path:session.repo_path
     ~worktree_path:session.worktree_path
 
-let attach_rpc_callbacks server (session : Agent_session.t) =
+let attach_rpc_callbacks (server : t) (session : Agent_session.t) =
   let on_message json =
     let event_type, payload = Event_mapper.from_agent_message json in
     ignore (Session_store.append_event server.sessions session.Agent_session.id ~type_:event_type ~payload);
@@ -136,7 +239,7 @@ let initialize_agent server (session : Agent_session.t) =
             end
       end
 
-let create_session server (request : Models.create_session_request) =
+let create_session (server : t) (request : Models.create_session_request) =
   match Worktree_manager.create_worktree ~repo_path:request.repo_path ~session_id:(make_session_id ()) with
   | Error err -> Error err
   | Ok worktree_path ->
@@ -159,7 +262,7 @@ let create_session server (request : Models.create_session_request) =
           Session_store.remove_session server.sessions session.id;
           Error err
 
-let prompt_session server (session : Agent_session.t) (prompt : Models.prompt_request) =
+let prompt_session (server : t) (session : Agent_session.t) (prompt : Models.prompt_request) =
   Session_store.update_status server.sessions session.id "busy";
   ignore (Session_store.append_event server.sessions session.id ~type_:"acp.status"
     ~payload:(`Assoc [("state", `String "busy")]));
@@ -208,7 +311,7 @@ let tool_decision (session : Agent_session.t) (request : Models.tool_decision_re
 let session_json (session : Agent_session.t) =
   Models.session_summary_to_json (Agent_session.to_summary session)
 
-let list_sessions_handler server reqd =
+let list_sessions_handler (server : t) reqd =
   let sessions = Session_store.list_sessions server.sessions |> Models.json_list_of_summaries in
   Http_server.respond_json reqd (`Assoc [("sessions", sessions)])
 
@@ -218,7 +321,7 @@ let health_handler reqd =
     ("timestamp", `Float (Unix.gettimeofday ()));
   ])
 
-let create_session_handler server reqd =
+let create_session_handler (server : t) reqd =
   read_json_body reqd (fun json ->
     match Models.parse_create_session_request json with
     | Error err -> Http_server.respond_json ~status:`Bad_request reqd (Json_utils.error_json err)
@@ -228,7 +331,7 @@ let create_session_handler server reqd =
           | Error err -> error_response ~status:`Internal_server_error err
           | Ok session -> json_response (`Assoc [("session", session_json session)])))
 
-let handle_sse server session_id reqd =
+let handle_sse (server : t) session_id reqd =
   match find_session server session_id with
   | None -> Http_server.respond_text ~status:`Not_found reqd "Session not found"
   | Some _session ->
@@ -241,30 +344,39 @@ let handle_sse server session_id reqd =
           ("connection", "keep-alive");
         ]
       in
-      let replay = Session_store.events_after server.sessions session_id last_event_id in
-      List.iter (fun event -> Http_server.write_stream stream (format_sse_event event)) replay;
-      let subscriber_ref = ref None in
+      let sink = {
+        stream;
+        sessions = server.sessions;
+        session_id;
+        mutex = Mutex.create ();
+        pending = Queue.create ();
+        subscriber_id = None;
+        replay_complete = false;
+        draining = false;
+        closed = false;
+      } in
       let callback event =
-        try
-          Http_server.write_stream stream (format_sse_event event)
-        with exn ->
-          begin
-            match !subscriber_ref with
-            | Some subscriber_id -> Session_store.unsubscribe server.sessions session_id subscriber_id
-            | None -> ()
-          end;
-          Http_server.close_stream stream;
-          raise exn
+        enqueue_live_sse_event sink event
       in
       begin
-        match Session_store.subscribe server.sessions session_id callback with
+        match Session_store.subscribe_with_replay server.sessions session_id last_event_id callback with
         | Error err ->
-            Http_server.close_stream stream;
+            cleanup_sse_sink sink;
             Log.warn (fun m -> m "Failed to subscribe SSE client: %s" err)
-        | Ok subscriber_id -> subscriber_ref := Some subscriber_id
+        | Ok (subscriber_id, replay) ->
+            Mutex.lock sink.mutex;
+            sink.subscriber_id <- Some subscriber_id;
+            Mutex.unlock sink.mutex;
+            let rec write_replay = function
+              | [] -> finish_replay sink
+              | event :: rest ->
+                  if write_sse_event sink event then
+                    write_replay rest
+            in
+            write_replay replay
       end
 
-let handle_session_route server meth path reqd =
+let handle_session_route (server : t) meth path reqd =
   match split_segments path with
   | ["sessions"] when meth = `GET -> list_sessions_handler server reqd
   | ["sessions"; session_id] when meth = `GET ->
@@ -346,10 +458,10 @@ let create config =
   Http_server.add_route http_server ~method_:(Some `POST) "/sessions" (create_session_handler server);
   server
 
-let start server =
+let start (server : t) =
   ignore (Http_server.start server.http_server)
 
-let stop server =
+let stop (server : t) =
   Session_store.all_sessions server.sessions
   |> List.iter (fun session ->
        cleanup_session session;

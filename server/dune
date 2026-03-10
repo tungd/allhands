@@ -36,6 +36,11 @@
  (libraries allhands_server_lib unix))
 
 (test
+ (name test_sse)
+ (modules test_sse)
+ (libraries allhands_server_lib yojson unix))
+
+(test
  (name test_integration)
  (modules test_integration)
  (libraries allhands_server_lib yojson unix))

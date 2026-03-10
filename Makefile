@@ -18,6 +18,7 @@ test:
 	cd server && ./_build/default/test_event_mapper.exe
 	cd server && ./_build/default/test_session_store.exe
 	cd server && ./_build/default/test_worktree_manager.exe
+	cd server && ./_build/default/test_sse.exe
 	cd server && ./_build/default/test_integration.exe
 	cd ios && swift test --package-path AllHandsKit
 

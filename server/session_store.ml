@@ -2,11 +2,19 @@ module Log = (val Logs.src_log (Logs.Src.create "session_store") : Logs.LOG)
 
 type subscriber_id = string
 
+type subscriber = {
+  callback : Models.stream_event -> unit;
+  mutex : Mutex.t;
+  pending : Models.stream_event Queue.t;
+  mutable draining : bool;
+  mutable active : bool;
+}
+
 type entry = {
   session : Agent_session.t;
   mutable events : Models.stream_event list;
   mutable next_seq : int;
-  subscribers : (subscriber_id, Models.stream_event -> unit) Hashtbl.t;
+  subscribers : (subscriber_id, subscriber) Hashtbl.t;
 }
 
 type t = {
@@ -63,21 +71,86 @@ let parse_event_id event_id =
       let seq = String.sub event_id (idx + 1) (String.length event_id - idx - 1) in
       int_of_string_opt seq
 
+let after_seq_of_last_event_id last_event_id =
+  match last_event_id with
+  | None -> 0
+  | Some value -> Option.value ~default:0 (parse_event_id value)
+
+let events_after_seq entry after_seq =
+  entry.events
+  |> List.filter (fun event -> event.Models.seq > after_seq)
+
 let events_after store session_id last_event_id =
   with_lock store (fun () ->
     match Hashtbl.find_opt store.sessions session_id with
     | None -> []
     | Some entry ->
-        let after_seq =
-          match last_event_id with
-          | None -> 0
-          | Some value -> Option.value ~default:0 (parse_event_id value)
-        in
-        entry.events
-        |> List.filter (fun event -> event.Models.seq > after_seq))
+        events_after_seq entry (after_seq_of_last_event_id last_event_id))
+
+let create_subscriber callback =
+  {
+    callback;
+    mutex = Mutex.create ();
+    pending = Queue.create ();
+    draining = false;
+    active = true;
+  }
+
+let make_subscriber_id () =
+  Printf.sprintf "sub_%08x%08x" (Random.bits ()) (Random.bits ())
+
+let subscribe_entry entry callback =
+  let id = make_subscriber_id () in
+  Hashtbl.replace entry.subscribers id (create_subscriber callback);
+  id
+
+let enqueue_event (subscriber : subscriber) event =
+  Mutex.lock subscriber.mutex;
+  let should_drain =
+    if not subscriber.active then
+      false
+    else begin
+      Queue.add event subscriber.pending;
+      if subscriber.draining then false
+      else begin
+        subscriber.draining <- true;
+        true
+      end
+    end
+  in
+  Mutex.unlock subscriber.mutex;
+  should_drain
+
+let clear_pending_events (subscriber : subscriber) =
+  while not (Queue.is_empty subscriber.pending) do
+    ignore (Queue.take subscriber.pending)
+  done
+
+let drain_subscriber subscriber_id (subscriber : subscriber) =
+  let rec loop () =
+    Mutex.lock subscriber.mutex;
+    let next_event =
+      if (not subscriber.active) || Queue.is_empty subscriber.pending then begin
+        subscriber.draining <- false;
+        None
+      end else
+        Some (Queue.take subscriber.pending)
+    in
+    Mutex.unlock subscriber.mutex;
+    match next_event with
+    | None -> ()
+    | Some event ->
+        begin
+          try subscriber.callback event
+          with exn ->
+            Log.warn (fun m -> m "Subscriber %s failed: %s" subscriber_id (Printexc.to_string exn))
+        end;
+        loop ()
+  in
+  loop ()
 
 let append_event store session_id ~type_ ~payload =
-  let subscribers, event =
+  let drainers, event =
     with_lock store (fun () ->
       match Hashtbl.find_opt store.sessions session_id with
       | None -> ([], None)
@@ -93,19 +166,21 @@ let append_event store session_id ~type_ ~payload =
             payload;
           } in
           entry.events <- entry.events @ [event];
-          let subscribers =
-            Hashtbl.fold (fun id callback acc -> (id, callback) :: acc) entry.subscribers []
+          let drainers =
+            Hashtbl.fold
+              (fun id subscriber acc ->
+                if enqueue_event subscriber event then (id, subscriber) :: acc else acc)
+              entry.subscribers
+              []
           in
-          (subscribers, Some event))
+          (drainers, Some event))
   in
   match event with
   | None -> None
   | Some event ->
-      List.iter (fun (subscriber_id, callback) ->
-        try callback event
-        with exn ->
-          Log.warn (fun m -> m "Subscriber %s failed: %s" subscriber_id (Printexc.to_string exn))
-      ) subscribers;
+      List.iter (fun (subscriber_id, subscriber) ->
+        drain_subscriber subscriber_id subscriber
+      ) drainers;
       Some event
 
 let subscribe store session_id callback =
@@ -113,15 +188,34 @@ let subscribe store session_id callback =
     match Hashtbl.find_opt store.sessions session_id with
     | None -> Error "Unknown session"
     | Some entry ->
-        let id = Printf.sprintf "sub_%08x%08x" (Random.bits ()) (Random.bits ()) in
-        Hashtbl.replace entry.subscribers id callback;
+        let id = subscribe_entry entry callback in
         Ok id)
+
+let subscribe_with_replay store session_id last_event_id callback =
+  with_lock store (fun () ->
+    match Hashtbl.find_opt store.sessions session_id with
+    | None -> Error "Unknown session"
+    | Some entry ->
+        let replay = events_after_seq entry (after_seq_of_last_event_id last_event_id) in
+        let id = subscribe_entry entry callback in
+        Ok (id, replay))
 
 let unsubscribe store session_id subscriber_id =
   with_lock store (fun () ->
     match Hashtbl.find_opt store.sessions session_id with
     | None -> ()
-    | Some entry -> Hashtbl.remove entry.subscribers subscriber_id)
+    | Some entry ->
+        begin
+          match Hashtbl.find_opt entry.subscribers subscriber_id with
+          | None -> ()
+          | Some subscriber ->
+              Mutex.lock subscriber.mutex;
+              subscriber.active <- false;
+              subscriber.draining <- false;
+              clear_pending_events subscriber;
+              Mutex.unlock subscriber.mutex
+        end;
+        Hashtbl.remove entry.subscribers subscriber_id)
 
 let update_status store session_id status =
   with_lock store (fun () ->
