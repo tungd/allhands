@@ -1,0 +1,15 @@
+.DS_Store
+.build
+.swiftpm
+.allhands
+DerivedData
+ios/AllHands.xcodeproj
+ios/Vendor
+server/_build
+server/.merlin
+server/.ocamlformat
+server/*.install
+server/*.opam.locked
+server/.coverage
+*.swp
+*.orig

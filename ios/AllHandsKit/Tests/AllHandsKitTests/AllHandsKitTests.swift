@@ -1,0 +1,49 @@
+import Foundation
+import Testing
+@testable import AllHandsKit
+
+@Test
+func sessionRoundTripDecodes() throws {
+    let event = StreamEvent(
+        id: "session_1:1",
+        sessionId: "session_1",
+        seq: 1,
+        type: "acp.thought",
+        timestamp: 12.5,
+        payload: .object(["text": .string("hello")])
+    )
+
+    let encoded = try JSONEncoder().encode(event)
+    let decoded = try JSONDecoder().decode(StreamEvent.self, from: encoded)
+
+    #expect(decoded == event)
+}
+
+@Test
+func sseParserBuildsEventBlock() {
+    var parser = SSEParser()
+    #expect(parser.feed(line: "id: one") == nil)
+    #expect(parser.feed(line: "event: acp.thought") == nil)
+    #expect(parser.feed(line: "data: {\"hello\":\"world\"}") == nil)
+    let event = parser.feed(line: "")
+
+    #expect(event == ServerSentEvent(id: "one", event: "acp.thought", data: "{\"hello\":\"world\"}"))
+}
+
+@Test
+func sessionStoreAppendsInOrder() async {
+    let store = await MainActor.run { SessionStore() }
+    await MainActor.run {
+        store.append(event: StreamEvent(id: "session:2", sessionId: "session", seq: 2, type: "acp.status", timestamp: 2, payload: .null))
+        store.append(event: StreamEvent(id: "session:1", sessionId: "session", seq: 1, type: "acp.init", timestamp: 1, payload: .null))
+    }
+    let events = await MainActor.run { store.events(for: "session") }
+    #expect(events.map(\.seq) == [1, 2])
+}
+
+@Test
+func directProviderReturnsSession() async throws {
+    let provider = DirectSessionProvider()
+    let session = try await provider.makeURLSession()
+    #expect(session.configuration.identifier == nil)
+}

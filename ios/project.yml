@@ -1,0 +1,28 @@
+name: AllHands
+options:
+  minimumXcodeGenVersion: 2.44.1
+packages:
+  AllHandsKit:
+    path: ./AllHandsKit
+targets:
+  AllHands:
+    type: application
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: AllHandsApp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.allhands.app
+        PRODUCT_NAME: AllHands
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        SWIFT_VERSION: 6.0
+        CODE_SIGNING_ALLOWED: NO
+        FRAMEWORK_SEARCH_PATHS:
+          - $(PROJECT_DIR)/Vendor/TailscaleKit
+    dependencies:
+      - package: AllHandsKit
+    scheme:
+      testTargets: []

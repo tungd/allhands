@@ -1,0 +1,13 @@
+(lang dune 3.15)
+
+(package
+ (name allhands-server)
+ (allow_empty)
+ (synopsis "All Hands ACP host and mobile-facing SSE server")
+ (depends
+  (ocaml (>= 5.4))
+  (dune (>= 3.15))
+  h1
+  iomux
+  yojson
+  logs))

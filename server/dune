@@ -1,0 +1,41 @@
+(library
+ (name allhands_server_lib)
+ (wrapped false)
+ (libraries h1 iomux yojson logs unix)
+ (modules
+  json_utils
+  models
+  acp_transport
+  http_server
+  worktree_manager
+  agent_process
+  agent_rpc
+  agent_session
+  session_store
+  event_mapper
+  host_server))
+
+(executable
+ (name allhands_server)
+ (modules allhands_server)
+ (libraries allhands_server_lib logs logs.fmt unix))
+
+(test
+ (name test_event_mapper)
+ (modules test_event_mapper)
+ (libraries allhands_server_lib yojson))
+
+(test
+ (name test_session_store)
+ (modules test_session_store)
+ (libraries allhands_server_lib yojson unix))
+
+(test
+ (name test_worktree_manager)
+ (modules test_worktree_manager)
+ (libraries allhands_server_lib unix))
+
+(test
+ (name test_integration)
+ (modules test_integration)
+ (libraries allhands_server_lib yojson unix))

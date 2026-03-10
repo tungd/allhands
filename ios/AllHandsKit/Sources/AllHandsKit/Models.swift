@@ -1,0 +1,129 @@
+import Foundation
+
+public enum JSONValue: Codable, Equatable, Sendable {
+    case string(String)
+    case number(Double)
+    case bool(Bool)
+    case object([String: JSONValue])
+    case array([JSONValue])
+    case null
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            self = .null
+        } else if let value = try? container.decode(Bool.self) {
+            self = .bool(value)
+        } else if let value = try? container.decode(Double.self) {
+            self = .number(value)
+        } else if let value = try? container.decode(String.self) {
+            self = .string(value)
+        } else if let value = try? container.decode([String: JSONValue].self) {
+            self = .object(value)
+        } else if let value = try? container.decode([JSONValue].self) {
+            self = .array(value)
+        } else {
+            throw DecodingError.typeMismatch(JSONValue.self, .init(codingPath: decoder.codingPath, debugDescription: "Unsupported JSON value"))
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .string(let value):
+            try container.encode(value)
+        case .number(let value):
+            try container.encode(value)
+        case .bool(let value):
+            try container.encode(value)
+        case .object(let value):
+            try container.encode(value)
+        case .array(let value):
+            try container.encode(value)
+        case .null:
+            try container.encodeNil()
+        }
+    }
+}
+
+public struct CreateSessionRequest: Codable, Equatable, Sendable {
+    public var repoPath: String
+    public var agentCommand: String
+    public var agentArgs: [String]
+
+    public init(repoPath: String, agentCommand: String, agentArgs: [String]) {
+        self.repoPath = repoPath
+        self.agentCommand = agentCommand
+        self.agentArgs = agentArgs
+    }
+}
+
+public struct PromptRequest: Codable, Equatable, Sendable {
+    public var text: String
+
+    public init(text: String) {
+        self.text = text
+    }
+}
+
+public struct ToolDecisionRequest: Codable, Equatable, Sendable {
+    public var callId: String
+    public var decision: String
+    public var note: String?
+
+    public init(callId: String, decision: String, note: String? = nil) {
+        self.callId = callId
+        self.decision = decision
+        self.note = note
+    }
+}
+
+public struct SessionSummary: Codable, Equatable, Identifiable, Sendable {
+    public var id: String
+    public var status: String
+    public var repoPath: String
+    public var worktreePath: String
+    public var createdAt: Double
+
+    public init(id: String, status: String, repoPath: String, worktreePath: String, createdAt: Double) {
+        self.id = id
+        self.status = status
+        self.repoPath = repoPath
+        self.worktreePath = worktreePath
+        self.createdAt = createdAt
+    }
+}
+
+public struct StreamEvent: Codable, Equatable, Identifiable, Sendable {
+    public var id: String
+    public var sessionId: String
+    public var seq: Int
+    public var type: String
+    public var timestamp: Double
+    public var payload: JSONValue
+
+    public init(id: String, sessionId: String, seq: Int, type: String, timestamp: Double, payload: JSONValue) {
+        self.id = id
+        self.sessionId = sessionId
+        self.seq = seq
+        self.type = type
+        self.timestamp = timestamp
+        self.payload = payload
+    }
+}
+
+public struct ServerConfiguration: Equatable, Sendable {
+    public var baseURL: URL
+    public var repoPath: String
+    public var agentCommand: String
+    public var agentArgs: [String]
+    public var useTailnet: Bool
+
+    public init(baseURL: URL, repoPath: String, agentCommand: String, agentArgs: [String], useTailnet: Bool) {
+        self.baseURL = baseURL
+        self.repoPath = repoPath
+        self.agentCommand = agentCommand
+        self.agentArgs = agentArgs
+        self.useTailnet = useTailnet
+    }
+}
