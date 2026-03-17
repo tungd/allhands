@@ -216,6 +216,83 @@ let cleanup_session (session : Agent_session.t) =
     ~repo_path:session.repo_path
     ~worktree_path:session.worktree_path
 
+let permission_request_call_id payload =
+  match payload |> member "toolCall" |> member "callId" |> to_string_option with
+  | Some call_id -> Some call_id
+  | None -> payload |> member "callId" |> to_string_option
+
+let permission_request_id payload =
+  match payload |> member "requestId" with
+  | `Null -> None
+  | value -> Some value
+
+let is_permission_request_payload payload =
+  payload |> member "options" <> `Null && permission_request_id payload <> None
+
+let register_permission_request (session : Agent_session.t) payload =
+  match permission_request_call_id payload, permission_request_id payload with
+  | Some call_id, Some request_id ->
+      Hashtbl.replace session.pending_permission_requests call_id request_id
+  | _ -> ()
+
+let resolve_permission_request_id (session : Agent_session.t) request =
+  match request.Models.request_id, request.call_id with
+  | Some request_id, _ -> Some request_id
+  | None, Some call_id -> Hashtbl.find_opt session.pending_permission_requests call_id
+  | None, None -> None
+
+let option_id_of_request request =
+  match request.Models.option_id, request.decision with
+  | Some option_id, _ -> Some option_id
+  | None, Some "approved" -> Some "approved"
+  | None, Some "abort" -> Some "abort"
+  | None, Some "denied" -> Some "denied"
+  | None, Some decision -> Some decision
+  | None, None -> None
+
+let respond_to_permission_request (session : Agent_session.t) request =
+  match session.Agent_session.rpc, resolve_permission_request_id session request, option_id_of_request request with
+  | Some rpc, Some request_id, Some option_id ->
+      begin
+        match request.call_id with
+        | Some call_id -> Hashtbl.remove session.pending_permission_requests call_id
+        | None -> ()
+      end;
+      Agent_rpc.send_response rpc ~id:request_id
+        ~result:(`Assoc [
+          ("outcome", `Assoc [
+            ("outcome", `String "selected");
+            ("optionId", `String option_id);
+          ]);
+        ])
+  | Some _, None, _ -> Error "Unknown permission request"
+  | Some _, _, None -> Error "Missing permission option"
+  | None, _, _ -> Error "Session is not ready"
+
+let cancel_pending_permission_requests (session : Agent_session.t) =
+  match session.Agent_session.rpc with
+  | None -> Ok ()
+  | Some rpc ->
+      let pending =
+        Hashtbl.fold (fun call_id request_id acc -> (call_id, request_id) :: acc)
+          session.pending_permission_requests
+          []
+      in
+      let rec loop = function
+        | [] -> Ok ()
+        | (call_id, request_id) :: rest ->
+            Hashtbl.remove session.pending_permission_requests call_id;
+            begin
+              match Agent_rpc.send_response rpc ~id:request_id
+                      ~result:(`Assoc [
+                        ("outcome", `Assoc [("outcome", `String "cancelled")]);
+                      ]) with
+              | Ok () -> loop rest
+              | Error err -> Error err
+            end
+      in
+      loop pending
+
 let attach_rpc_callbacks (server : t) (session : Agent_session.t) =
   let on_message json =
     let event_type, payload = Event_mapper.from_agent_message json in
@@ -224,6 +301,8 @@ let attach_rpc_callbacks (server : t) (session : Agent_session.t) =
         session.id
         event_type
         (json_to_string json));
+    if event_type = "acp.call" && is_permission_request_payload payload then
+      register_permission_request session payload;
     ignore (Session_store.append_event server.sessions session.Agent_session.id ~type_:event_type ~payload);
     begin
       match event_type with
@@ -399,6 +478,12 @@ let prompt_session (server : t) (session : Agent_session.t) (prompt : Models.pro
 
 let cancel_session server (session : Agent_session.t) =
   Log.info (fun m -> m "Cancel request for %s" session.id);
+  begin
+    match cancel_pending_permission_requests session with
+    | Ok () -> ()
+    | Error err ->
+        Log.warn (fun m -> m "Failed to cancel pending permission requests for %s: %s" session.id err)
+  end;
   match session.Agent_session.rpc, session.child_session_id with
   | Some rpc, Some child_session_id ->
       Agent_rpc.send_request rpc ~method_:"session/cancel"
@@ -410,21 +495,26 @@ let cancel_session server (session : Agent_session.t) =
 
 let tool_decision (session : Agent_session.t) (request : Models.tool_decision_request) =
   Log.info (fun m ->
-    m "Tool decision for %s call=%s decision=%s note=%s"
+    m "Tool decision for %s call=%s option=%s decision=%s note=%s"
       session.id
-      request.call_id
-      request.decision
+      (Option.value ~default:"" request.call_id)
+      (Option.value ~default:"" request.option_id)
+      (Option.value ~default:"" request.decision)
       (Option.value ~default:"" request.note));
-  match session.Agent_session.rpc, session.child_session_id with
-  | Some rpc, Some child_session_id ->
-      Agent_rpc.send_notification rpc ~method_:"session/toolDecision"
-        ~params:(`Assoc [
-          ("sessionId", `String child_session_id);
-          ("callId", `String request.call_id);
-          ("decision", `String request.decision);
-          ("note", match request.note with Some note -> `String note | None -> `Null);
-        ])
-  | _ -> Error "Session is not ready"
+  match option_id_of_request request with
+  | Some _ when resolve_permission_request_id session request <> None ->
+      respond_to_permission_request session request
+  | _ ->
+      match session.Agent_session.rpc, session.child_session_id, request.call_id, request.decision with
+      | Some rpc, Some child_session_id, Some call_id, Some decision ->
+          Agent_rpc.send_notification rpc ~method_:"session/toolDecision"
+            ~params:(`Assoc [
+              ("sessionId", `String child_session_id);
+              ("callId", `String call_id);
+              ("decision", `String decision);
+              ("note", match request.note with Some note -> `String note | None -> `Null);
+            ])
+      | _ -> Error "Session is not ready"
 
 let session_json (session : Agent_session.t) =
   Models.session_summary_to_json (Agent_session.to_summary session)
@@ -650,8 +740,26 @@ let handle_session_route (server : t) meth path reqd =
                   begin
                     ignore (Session_store.append_event server.sessions session_id ~type_:"acp.call"
                       ~payload:(`Assoc [
-                        ("callId", `String request.call_id);
-                        ("decision", `String request.decision);
+                        ("requestId",
+                          match request.request_id with
+                          | Some request_id -> request_id
+                          | None -> `Null);
+                        ("callId",
+                          match request.call_id with
+                          | Some call_id -> `String call_id
+                          | None -> `Null);
+                        ("optionId",
+                          match option_id_of_request request with
+                          | Some option_id -> `String option_id
+                          | None -> `Null);
+                        ("decision",
+                          match request.decision with
+                          | Some decision -> `String decision
+                          | None -> `Null);
+                        ("outcome",
+                          match option_id_of_request request with
+                          | Some _ -> `String "selected"
+                          | None -> `Null);
                         ("note", match request.note with Some note -> `String note | None -> `Null);
                       ]));
                     match tool_decision session request with

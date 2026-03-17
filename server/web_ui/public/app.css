@@ -287,6 +287,23 @@ textarea {
   min-width: 0;
 }
 
+.event-summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.event-summary::-webkit-details-marker {
+  display: none;
+}
+
+.event-details[open] > .event-summary {
+  margin-bottom: 0.35rem;
+}
+
+.event-details-body {
+  min-width: 0;
+}
+
 .event-kind {
   font-weight: 700;
 }

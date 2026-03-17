@@ -273,6 +273,99 @@ let test_prompt_endpoint_accepts_immediately () =
          && (event.Models.payload |> member "state" |> to_string_option = Some "ready"))
          prompt_events))
 
+let test_tool_approval_flow_round_trips_decision () =
+  let repo = create_repo () in
+  let fake_agent = Filename.concat (source_root ()) "test_support/fake_acp_agent.py" in
+  let launcher = {
+    Launcher_catalog.id = "codex";
+    display_name = "Codex";
+    command = "/usr/bin/env";
+    args = ["FAKE_ACP_REQUIRE_APPROVAL=1"; "FAKE_ACP_PERMISSION_STYLE=request"; "python3"; fake_agent];
+  } in
+  with_server ~launch_root_path:repo ~available_launchers:[launcher] (fun server port ->
+    let session =
+      match Host_server.create_session_with_launcher server ~repo_path:repo launcher with
+      | Ok session -> session
+      | Error err -> failwith err
+    in
+    let before_events = Session_store.events_after server.Host_server.sessions session.id None in
+    let last_event_id =
+      before_events
+      |> List.rev
+      |> List.hd
+      |> fun event -> Some event.Models.id
+    in
+    let base_url = Printf.sprintf "http://127.0.0.1:%d" port in
+    let prompt_response =
+      http_json ~method_:"POST"
+        ~body:(Yojson.Safe.to_string (`Assoc [("text", `String "needs approval")]))
+        (base_url ^ "/sessions/" ^ session.id ^ "/prompts")
+    in
+    assert_int_equal "tool approval prompt accept status" 200 (prompt_response |> member "status" |> to_int);
+    assert_true "tool approval prompt accepted"
+      (prompt_response |> member "body" |> member "accepted" |> to_bool);
+    wait_until ~timeout_s:3.0 "tool approval request event" (fun () ->
+      let events = Session_store.events_after server.Host_server.sessions session.id last_event_id in
+      List.exists (fun event ->
+        event.Models.type_ = "acp.call"
+        && (event.Models.payload |> member "requestId" |> to_int_option = Some 1001))
+        events);
+    let approval_events = Session_store.events_after server.Host_server.sessions session.id last_event_id in
+    let call_event =
+      match List.find_opt (fun event ->
+        event.Models.type_ = "acp.call"
+        && (event.Models.payload |> member "requestId" |> to_int_option = Some 1001))
+          approval_events with
+      | Some event -> event
+      | None -> failwith "expected tool approval event"
+    in
+    let call_id =
+      call_event.Models.payload
+      |> member "toolCall"
+      |> member "callId"
+      |> to_string
+    in
+    let request_id =
+      call_event.Models.payload
+      |> member "requestId"
+    in
+    let decision_response =
+      http_json ~method_:"POST"
+        ~body:(Yojson.Safe.to_string (`Assoc [
+          ("requestId", request_id);
+          ("callId", `String call_id);
+          ("optionId", `String "approved");
+        ]))
+        (base_url ^ "/sessions/" ^ session.id ^ "/tool-decisions")
+    in
+    assert_int_equal "tool decision status" 200 (decision_response |> member "status" |> to_int);
+    assert_true "tool decision accepted"
+      (decision_response |> member "body" |> member "accepted" |> to_bool);
+    wait_until ~timeout_s:3.0 "tool approval prompt completion" (fun () ->
+      match Session_store.find_session server.Host_server.sessions session.id with
+      | None -> false
+      | Some current -> String.equal current.Agent_session.status "ready");
+    let prompt_events = Session_store.events_after server.Host_server.sessions session.id last_event_id in
+    assert_true "expected local tool decision event"
+      (List.exists (fun event ->
+         event.Models.type_ = "acp.call"
+         && (event.Models.payload |> member "requestId" |> to_int_option = Some 1001)
+         && (event.Models.payload |> member "callId" |> to_string_option = Some call_id)
+         && (event.Models.payload |> member "optionId" |> to_string_option = Some "approved")
+         && (event.Models.payload |> member "outcome" |> to_string_option = Some "selected"))
+         prompt_events);
+    assert_true "expected agent thought after tool approval"
+      (List.exists (fun event ->
+         event.Models.type_ = "acp.thought"
+         && (event.Models.payload |> member "update" |> member "content" |> member "text"
+             |> to_string_option = Some "Tool decision: approved"))
+         prompt_events);
+    assert_true "expected ready status event after tool approval"
+      (List.exists (fun event ->
+         event.Models.type_ = "acp.status"
+         && (event.Models.payload |> member "state" |> to_string_option = Some "ready"))
+         prompt_events))
+
 let test_ui_routes_and_cache_headers () =
   let repo = create_repo () in
   let fake_agent = Filename.concat (source_root ()) "test_support/fake_acp_agent.py" in
@@ -362,5 +455,6 @@ let test_http_server_records_fatal_loop_error () =
 let () =
   test_server_info_and_session_launch ();
   test_prompt_endpoint_accepts_immediately ();
+  test_tool_approval_flow_round_trips_decision ();
   test_ui_routes_and_cache_headers ();
   test_http_server_records_fatal_loop_error ()

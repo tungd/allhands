@@ -8,6 +8,7 @@ type t = {
   mutable status : string;
   mutable child_session_id : string option;
   mutable rpc : Agent_rpc.t option;
+  pending_permission_requests : (string, Yojson.Safe.t) Hashtbl.t;
 }
 
 let create ~id ~repo_path ~worktree_path ~agent_command ~agent_args =
@@ -21,6 +22,7 @@ let create ~id ~repo_path ~worktree_path ~agent_command ~agent_args =
     status = "starting";
     child_session_id = None;
     rpc = None;
+    pending_permission_requests = Hashtbl.create 8;
   }
 
 let to_summary session =

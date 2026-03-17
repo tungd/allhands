@@ -45,6 +45,13 @@ function decisionLabel(decision) {
   }
 }
 
+function requestOptionLabel(option) {
+  if (typeof option?.name === "string" && option.name.trim()) {
+    return option.name.trim();
+  }
+  return typeof option?.optionId === "string" ? option.optionId : "Choose";
+}
+
 function formatArguments(value) {
   if (value == null) {
     return null;
@@ -53,6 +60,12 @@ function formatArguments(value) {
     return value;
   }
   return JSON.stringify(value, null, 2);
+}
+
+function optionLabel(callInfo, optionId, fallback) {
+  const options = Array.isArray(callInfo.options) ? callInfo.options : [];
+  const match = options.find((option) => option?.optionId === optionId);
+  return typeof match?.name === "string" && match.name.trim() ? match.name.trim() : fallback;
 }
 
 function renderHomePage() {
@@ -74,52 +87,57 @@ function renderStatePanel(title, body, action) {
 }
 
 function renderToolActions(state, actions, callInfo) {
-  if (!callInfo.callId) {
+  if (!callInfo.callId || !callInfo.approvalRequired) {
     return null;
   }
 
   const resolution = state.resolvedCalls[callInfo.callId];
   const pending = !!state.toolPending[callInfo.callId];
-  const note = state.toolNotes[callInfo.callId] ?? "";
   const error = state.toolErrors[callInfo.callId];
+  const options = Array.isArray(callInfo.options) ? callInfo.options : [];
 
   if (resolution) {
+    const resolvedLabel = optionLabel(callInfo, resolution.decision, decisionLabel(resolution.decision));
     return m(".call-resolution", [
-      m("span.resolution-label", decisionLabel(resolution.decision)),
+      m("span.resolution-label", resolvedLabel),
       resolution.note ? m("p", resolution.note) : null,
     ]);
   }
 
   return m(".call-actions", [
-    m("label.field-label", { for: `note-${callInfo.callId}` }, "Reviewer note"),
-    m("textarea.note-input", {
-      id: `note-${callInfo.callId}`,
-      rows: 3,
-      placeholder: "Optional note for the agent",
-      value: note,
-      oninput: (event) => actions.updateToolNote(callInfo.callId, event.target.value),
-      disabled: pending,
-    }),
     error ? m("p.inline-error", error) : null,
     m(".call-action-row", [
-      m(
-        "button.button.button-secondary",
-        {
-          type: "button",
-          disabled: pending,
-          onclick: () => actions.decideTool(callInfo.callId, "denied"),
-        },
-        pending ? "Working..." : "Deny",
-      ),
-      m(
-        "button.button.button-primary",
-        {
-          type: "button",
-          disabled: pending,
-          onclick: () => actions.decideTool(callInfo.callId, "approved"),
-        },
-        pending ? "Working..." : "Approve",
-      ),
+      ...(options.length
+        ? options.map((option, index) =>
+            m(
+              `button.button.${index === 0 ? "button-primary" : "button-secondary"}`,
+              {
+                type: "button",
+                disabled: pending,
+                onclick: () => actions.decideTool(callInfo, option.optionId),
+              },
+              pending ? "Working..." : requestOptionLabel(option),
+            ))
+        : [
+            m(
+              "button.button.button-secondary",
+              {
+                type: "button",
+                disabled: pending,
+                onclick: () => actions.decideTool(callInfo, "denied"),
+              },
+              pending ? "Working..." : optionLabel(callInfo, "abort", optionLabel(callInfo, "denied", "Deny")),
+            ),
+            m(
+              "button.button.button-primary",
+              {
+                type: "button",
+                disabled: pending,
+                onclick: () => actions.decideTool(callInfo, "approved"),
+              },
+              pending ? "Working..." : optionLabel(callInfo, "approved", "Approve"),
+            ),
+          ]),
     ]),
   ]);
 }
@@ -134,6 +152,23 @@ function renderThoughtItem(item) {
   ]);
 }
 
+function shouldExpandByDefault(item) {
+  if (item.kind === "thought") {
+    return true;
+  }
+  if (item.kind === "call" && item.callInfo?.approvalRequired) {
+    return true;
+  }
+  return false;
+}
+
+function renderCardMeta(title, timeLabel) {
+  return m(".event-meta", [
+    m("span.event-kind", title),
+    m("span.event-time", timeLabel),
+  ]);
+}
+
 function renderEventCard(state, actions, item) {
   const timeLabel = formatTimestamp(item.timestamp);
   const cardClass = `event-card event-${item.kind}`;
@@ -145,43 +180,63 @@ function renderEventCard(state, actions, item) {
   if (item.kind === "call") {
     const args = formatArguments(item.callInfo.arguments);
     return m("article", { class: `${cardClass} event-system`, key: item.id }, [
-      m(".event-meta", [
-        m("span.event-kind", item.title),
-        m("span.event-time", timeLabel),
-      ]),
-      item.callInfo.callId ? m("p.event-call-id", `Call ID: ${item.callInfo.callId}`) : null,
-      args ? m("pre.code-block", args) : null,
-      item.body ? m("p.event-body", item.body) : null,
-      renderToolActions(state, actions, item.callInfo),
+      m(
+        "details.event-details",
+        { open: shouldExpandByDefault(item) },
+        [
+          m("summary.event-summary", renderCardMeta(item.title, timeLabel)),
+          m(".event-details-body", [
+            item.callInfo.callId ? m("p.event-call-id", `Call ID: ${item.callInfo.callId}`) : null,
+            args ? m("pre.code-block", args) : null,
+            item.body ? m("p.event-body", item.body) : null,
+            renderToolActions(state, actions, item.callInfo),
+          ]),
+        ],
+      ),
     ]);
   }
 
   if (item.kind === "patch") {
     return m("article", { class: `${cardClass} event-system`, key: item.id }, [
-      m(".event-meta", [
-        m("span.event-kind", item.title),
-        m("span.event-time", timeLabel),
-      ]),
-      m("pre.code-block", item.body),
+      m(
+        "details.event-details",
+        { open: shouldExpandByDefault(item) },
+        [
+          m("summary.event-summary", renderCardMeta(item.title, timeLabel)),
+          m(".event-details-body", [
+            m("pre.code-block", item.body),
+          ]),
+        ],
+      ),
     ]);
   }
 
   if (item.kind === "status") {
     return m("article", { class: `${cardClass} event-system`, key: item.id }, [
-      m(".event-meta", [
-        m("span.event-kind", item.title),
-        m("span.event-time", timeLabel),
-      ]),
-      item.body ? m("p.event-body", item.body) : null,
+      m(
+        "details.event-details",
+        { open: shouldExpandByDefault(item) },
+        [
+          m("summary.event-summary", renderCardMeta(item.title, timeLabel)),
+          m(".event-details-body", [
+            item.body ? m("p.event-body", item.body) : null,
+          ]),
+        ],
+      ),
     ]);
   }
 
   return m("article", { class: `${cardClass} event-system`, key: item.id }, [
-    m(".event-meta", [
-      m("span.event-kind", item.title),
-      m("span.event-time", timeLabel),
-    ]),
-    item.body ? m("p.event-body", item.body) : null,
+    m(
+      "details.event-details",
+      { open: shouldExpandByDefault(item) },
+      [
+        m("summary.event-summary", renderCardMeta(item.title, timeLabel)),
+        m(".event-details-body", [
+          item.body ? m("p.event-body", item.body) : null,
+        ]),
+      ],
+    ),
   ]);
 }
 

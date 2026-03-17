@@ -10,8 +10,10 @@ type prompt_request = {
 }
 
 type tool_decision_request = {
-  call_id : string;
-  decision : string;
+  request_id : Yojson.Safe.t option;
+  call_id : string option;
+  option_id : string option;
+  decision : string option;
   note : string option;
 }
 
@@ -60,17 +62,39 @@ let parse_prompt_request json =
   | Ok text -> Ok { text }
 
 let parse_tool_decision_request json =
-  match Json_utils.field_string json "callId" with
+  let request_id =
+    match json |> member "requestId" with
+    | `Null -> Ok None
+    | (`String _ | `Int _ | `Intlit _ | `Float _) as value -> Ok (Some value)
+    | _ -> Error "Field requestId must be a JSON-RPC id"
+  in
+  match request_id with
   | Error err -> Error err
-  | Ok call_id ->
+  | Ok request_id ->
       begin
-        match Json_utils.field_string json "decision" with
+        match Json_utils.field_string_option json "callId" with
         | Error err -> Error err
-        | Ok decision ->
+        | Ok call_id ->
             begin
-              match Json_utils.field_string_option json "note" with
+              match Json_utils.field_string_option json "optionId" with
               | Error err -> Error err
-              | Ok note -> Ok { call_id; decision; note }
+              | Ok option_id ->
+                  begin
+                    match Json_utils.field_string_option json "decision" with
+                    | Error err -> Error err
+                    | Ok decision ->
+                        begin
+                          match Json_utils.field_string_option json "note" with
+                          | Error err -> Error err
+                          | Ok note ->
+                              if request_id = None && call_id = None then
+                                Error "Missing field: requestId or callId"
+                              else if option_id = None && decision = None then
+                                Error "Missing field: optionId or decision"
+                              else
+                                Ok { request_id; call_id; option_id; decision; note }
+                        end
+                  end
             end
       end
 

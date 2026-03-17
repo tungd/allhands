@@ -65,12 +65,22 @@ public struct PromptRequest: Codable, Equatable, Sendable {
 }
 
 public struct ToolDecisionRequest: Codable, Equatable, Sendable {
-    public var callId: String
-    public var decision: String
+    public var requestId: JSONValue?
+    public var callId: String?
+    public var optionId: String?
+    public var decision: String?
     public var note: String?
 
-    public init(callId: String, decision: String, note: String? = nil) {
+    public init(
+        requestId: JSONValue? = nil,
+        callId: String? = nil,
+        optionId: String? = nil,
+        decision: String? = nil,
+        note: String? = nil
+    ) {
+        self.requestId = requestId
         self.callId = callId
+        self.optionId = optionId
         self.decision = decision
         self.note = note
     }

@@ -43,6 +43,155 @@ test("readCallInfo extracts tool call metadata from ACP updates", () => {
   assert.equal(info.name, "run_test");
   assert.deepEqual(info.arguments, { target: "server" });
   assert.equal(info.decision, null);
+  assert.equal(info.approvalRequired, false);
+});
+
+test("readCallInfo marks approval-required tool calls", () => {
+  const info = readCallInfo({
+    update: {
+      sessionUpdate: "tool_approval_required",
+      toolCall: {
+        callId: "call-9",
+        name: "run_test",
+      },
+    },
+  });
+
+  assert.equal(info.callId, "call-9");
+  assert.equal(info.approvalRequired, true);
+  assert.equal(info.sessionUpdate, "tool_approval_required");
+});
+
+test("readCallInfo understands request-permission payloads", () => {
+  const info = readCallInfo({
+    requestId: 77,
+    toolCall: {
+      callId: "call-9",
+      name: "run_test",
+    },
+    options: [
+      { optionId: "approved", name: "Approve", kind: "allow_once" },
+      { optionId: "abort", name: "Abort", kind: "reject_once" },
+    ],
+  });
+
+  assert.equal(info.callId, "call-9");
+  assert.equal(info.requestId, 77);
+  assert.equal(info.approvalRequired, true);
+  assert.deepEqual(info.options, [
+    { optionId: "approved", name: "Approve", kind: "allow_once" },
+    { optionId: "abort", name: "Abort", kind: "reject_once" },
+  ]);
+});
+
+test("normalizeEvent labels approval-required calls distinctly", () => {
+  const event = {
+    type: "acp.call",
+    payload: {
+      update: {
+        sessionUpdate: "tool_approval_required",
+        toolCall: {
+          callId: "call-2",
+          name: "run_test",
+        },
+      },
+    },
+  };
+
+  assert.deepEqual(normalizeEvent(event), {
+    kind: "call",
+    title: "Approval required: run_test",
+    body: "The agent is waiting for your decision before continuing.",
+    callInfo: {
+      callId: "call-2",
+      requestId: null,
+      name: "run_test",
+      arguments: null,
+      decision: null,
+      note: null,
+      sessionUpdate: "tool_approval_required",
+      approvalRequired: true,
+      options: null,
+    },
+  });
+});
+
+test("normalizeEvent labels request-permission calls distinctly", () => {
+  const event = {
+    type: "acp.call",
+    payload: {
+      requestId: 77,
+      toolCall: {
+        callId: "call-2",
+        name: "run_test",
+      },
+      options: [
+        { optionId: "approved", name: "Approve", kind: "allow_once" },
+        { optionId: "abort", name: "Abort", kind: "reject_once" },
+      ],
+    },
+  };
+
+  assert.deepEqual(normalizeEvent(event), {
+    kind: "call",
+    title: "Approval required: run_test",
+    body: "The agent is waiting for your decision before continuing.",
+    callInfo: {
+      callId: "call-2",
+      requestId: 77,
+      name: "run_test",
+      arguments: null,
+      decision: null,
+      note: null,
+      sessionUpdate: null,
+      approvalRequired: true,
+      options: [
+        { optionId: "approved", name: "Approve", kind: "allow_once" },
+        { optionId: "abort", name: "Abort", kind: "reject_once" },
+      ],
+    },
+  });
+});
+
+test("normalizeEvent converts approval-shaped thought content into a call card", () => {
+  const event = {
+    type: "acp.thought",
+    payload: {
+      update: {
+        content: {
+          callId: "call-44",
+          toolName: "run_test",
+          message: "Run the test suite?",
+          options: [
+            { optionId: "approved", name: "Yes", kind: "allow_once" },
+            { optionId: "abort", name: "No, provide feedback", kind: "reject_once" },
+          ],
+        },
+      },
+    },
+  };
+
+  assert.deepEqual(normalizeEvent(event), {
+    kind: "call",
+    title: "Approval required: run_test",
+    body: "Run the test suite?",
+    callInfo: {
+      callId: "call-44",
+      name: "run_test",
+      arguments: null,
+      decision: null,
+      note: null,
+      sessionUpdate: "tool_approval_required",
+      approvalRequired: true,
+      options: [
+        { optionId: "approved", name: "Yes", kind: "allow_once" },
+        { optionId: "abort", name: "No, provide feedback", kind: "reject_once" },
+      ],
+      requestId: null,
+      source: "content",
+      body: "Run the test suite?",
+    },
+  });
 });
 
 test("mergeEvents deduplicates by id and preserves order by sequence", () => {

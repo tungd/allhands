@@ -106,5 +106,8 @@ let send_request ?(timeout_s=300.0) t ~method_ ~params =
 let send_notification t ~method_ ~params =
   Agent_process.send_json t.process (Json_utils.jsonrpc_notification ~method_ ~params)
 
+let send_response t ~id ~result =
+  Agent_process.send_json t.process (Json_utils.jsonrpc_response ~id ~result)
+
 let terminate t =
   Agent_process.terminate t.process

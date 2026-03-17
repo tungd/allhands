@@ -13,7 +13,6 @@ export function createInitialState(sessionId) {
     promptError: null,
     cancelPending: false,
     cancelError: null,
-    toolNotes: {},
     toolPending: {},
     toolErrors: {},
     resolvedCalls: {},
@@ -141,14 +140,6 @@ export function reduceSessionState(state, action) {
         cancelPending: false,
         cancelError: action.error,
       };
-    case "tool-note/change":
-      return {
-        ...state,
-        toolNotes: {
-          ...state.toolNotes,
-          [action.callId]: action.note,
-        },
-      };
     case "tool-decision/start":
       return {
         ...state,
@@ -172,7 +163,7 @@ export function reduceSessionState(state, action) {
           ...state.resolvedCalls,
           [action.callId]: {
             decision: action.decision,
-            note: action.note ?? null,
+            note: null,
             source: "local",
           },
         },

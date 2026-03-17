@@ -47,10 +47,13 @@ export function buildPromptRequest(text) {
   return { text };
 }
 
-export function buildToolDecisionRequest(callId, decision, note) {
-  const payload = { callId, decision };
-  if (typeof note === "string" && note.trim()) {
-    payload.note = note.trim();
+export function buildToolDecisionRequest(callInfo, optionId) {
+  const payload = { optionId };
+  if (callInfo?.callId) {
+    payload.callId = callInfo.callId;
+  }
+  if (callInfo && callInfo.requestId != null) {
+    payload.requestId = callInfo.requestId;
   }
   return payload;
 }
@@ -82,14 +85,14 @@ export function createApiClient({ baseUrl = "", fetchImpl = globalThis.fetch } =
       );
     },
 
-    async decideTool(sessionId, callId, decision, note) {
+    async decideTool(sessionId, callInfo, optionId) {
       return requestJson(
         fetchImpl,
         joinUrl(baseUrl, `/sessions/${encodeURIComponent(sessionId)}/tool-decisions`),
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(buildToolDecisionRequest(callId, decision, note)),
+          body: JSON.stringify(buildToolDecisionRequest(callInfo, optionId)),
         },
       );
     },

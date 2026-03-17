@@ -39,6 +39,13 @@ let jsonrpc_notification ~method_ ~params =
     ("params", params);
   ]
 
+let jsonrpc_response ~id ~result =
+  `Assoc [
+    ("jsonrpc", `String "2.0");
+    ("id", id);
+    ("result", result);
+  ]
+
 let error_json message =
   `Assoc [("error", `String message)]
 

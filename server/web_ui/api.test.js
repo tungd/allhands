@@ -9,11 +9,7 @@ test("buildPromptRequest preserves prompt text", () => {
 
 test("buildToolDecisionRequest trims note and omits empty note", () => {
   assert.deepEqual(
-    buildToolDecisionRequest("call-1", "approved", "  looks good  "),
-    { callId: "call-1", decision: "approved", note: "looks good" },
-  );
-  assert.deepEqual(
-    buildToolDecisionRequest("call-1", "denied", "   "),
-    { callId: "call-1", decision: "denied" },
+    buildToolDecisionRequest({ callId: "call-1", requestId: 7 }, "approved"),
+    { callId: "call-1", requestId: 7, optionId: "approved" },
   );
 });

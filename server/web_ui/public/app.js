@@ -134,17 +134,16 @@ function createSessionController(sessionId) {
         }
       },
 
-      updateToolNote(callId, note) {
-        dispatch({ type: "tool-note/change", callId, note });
-      },
-
-      async decideTool(callId, decision) {
-        const note = store.getState().toolNotes[callId] ?? "";
+      async decideTool(callInfo, optionId) {
+        const callId = callInfo.callId;
+        if (!callId) {
+          return;
+        }
         dispatch({ type: "tool-decision/start", callId });
         try {
-          await api.decideTool(sessionId, callId, decision, note);
+          await api.decideTool(sessionId, callInfo, optionId);
           if (!stopped) {
-            dispatch({ type: "tool-decision/success", callId, decision, note });
+            dispatch({ type: "tool-decision/success", callId, decision: optionId });
           }
         } catch (error) {
           if (!stopped) {

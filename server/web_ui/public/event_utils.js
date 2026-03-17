@@ -21,16 +21,97 @@ function stringifyValue(value) {
   }
 }
 
+function normalizeRequestId(value) {
+  if (typeof value === "string" || typeof value === "number") {
+    return value;
+  }
+  return null;
+}
+
+function firstNonEmptyString(values) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
+function readApprovalPromptContent(content = {}) {
+  if (!content || typeof content !== "object" || Array.isArray(content)) {
+    return null;
+  }
+
+  const options = Array.isArray(content.options) ? content.options : null;
+  if (!options || options.length === 0) {
+    return null;
+  }
+
+  const optionIds = new Set(
+    options
+      .map((option) => option?.optionId)
+      .filter((value) => typeof value === "string"),
+  );
+  const looksLikeApproval =
+    optionIds.has("approved")
+    && (optionIds.has("abort") || optionIds.has("denied"));
+  if (!looksLikeApproval) {
+    return null;
+  }
+
+  const callId = firstNonEmptyString([
+    content.callId,
+    content.toolCallId,
+    content.id,
+    content.requestId,
+  ]);
+
+  const name = firstNonEmptyString([
+    content.toolName,
+    content.name,
+    content.title,
+  ]) ?? "Tool request";
+
+  const body = firstNonEmptyString([
+    content.message,
+    content.text,
+    content.prompt,
+    content.description,
+    content.subtitle,
+  ]) ?? "The agent is waiting for your decision before continuing.";
+
+  return {
+    callId,
+    requestId: null,
+    name,
+    arguments: content.arguments ?? content.input ?? null,
+    decision: null,
+    note: null,
+    sessionUpdate: "tool_approval_required",
+    approvalRequired: true,
+    options,
+    source: "content",
+    body,
+  };
+}
+
 export function readCallInfo(payload = {}) {
   const update = payload.update ?? {};
   const toolCall = update.toolCall ?? payload.toolCall ?? {};
+  const sessionUpdate = firstString([
+    update.sessionUpdate,
+    payload.sessionUpdate,
+  ]);
+  const requestId = normalizeRequestId(payload.requestId);
+  const directOptions = Array.isArray(payload.options) ? payload.options : null;
   return {
     callId: firstString([
       toolCall.callId,
       toolCall.id,
       payload.callId,
       update.callId,
-    ]),
+    ]) ?? (requestId == null ? null : String(requestId)),
+    requestId,
     name: firstString([
       toolCall.name,
       payload.name,
@@ -38,7 +119,9 @@ export function readCallInfo(payload = {}) {
     ]) ?? "Tool call",
     arguments: toolCall.arguments ?? toolCall.input ?? payload.arguments ?? null,
     decision: firstString([
+      payload.optionId,
       payload.decision,
+      payload.outcome === "cancelled" ? "cancelled" : null,
       update.decision,
       toolCall.decision,
     ]),
@@ -47,6 +130,13 @@ export function readCallInfo(payload = {}) {
       update.note,
       toolCall.note,
     ]),
+    sessionUpdate,
+    approvalRequired:
+      sessionUpdate === "tool_approval_required"
+      || payload.requiresApproval === true
+      || toolCall.requiresApproval === true
+      || (requestId != null && Array.isArray(directOptions) && directOptions.length > 0),
+    options: directOptions ?? null,
   };
 }
 
@@ -56,6 +146,17 @@ export function normalizeEvent(event = {}) {
   const type = event.type ?? "acp.status";
 
   if (type === "acp.thought") {
+    const content = update.content ?? payload.content ?? null;
+    const approvalPrompt = readApprovalPromptContent(content);
+    if (approvalPrompt) {
+      return {
+        kind: "call",
+        title: `Approval required: ${approvalPrompt.name}`,
+        body: approvalPrompt.body,
+        callInfo: approvalPrompt,
+      };
+    }
+
     return {
       kind: "thought",
       title: "Agent",
@@ -71,8 +172,13 @@ export function normalizeEvent(event = {}) {
     const callInfo = readCallInfo(payload);
     return {
       kind: "call",
-      title: callInfo.decision ? "Tool decision" : callInfo.name,
-      body: callInfo.note ?? "",
+      title: callInfo.decision
+        ? "Tool decision"
+        : callInfo.approvalRequired
+          ? `Approval required: ${callInfo.name}`
+          : callInfo.name,
+      body: callInfo.note
+        ?? (callInfo.approvalRequired ? "The agent is waiting for your decision before continuing." : ""),
       callInfo,
     };
   }
