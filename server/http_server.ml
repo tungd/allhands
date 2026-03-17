@@ -85,6 +85,7 @@ type t = {
   mutable routes : route list;
   mutex : Mutex.t;
   running : bool Atomic.t;
+  mutable last_error : string option;
   mutable listener : Unix.file_descr option;
   mutable wake_read : Unix.file_descr option;
   mutable wake_write : Unix.file_descr option;
@@ -107,6 +108,17 @@ let active_server : t option Atomic.t = Atomic.make None
 let current_connection : connection option ref = ref None
 
 let wake_byte = Bytes.make 1 '\x00'
+
+let set_last_error (server : t) error =
+  Mutex.lock server.mutex;
+  server.last_error <- Some error;
+  Mutex.unlock server.mutex
+
+let get_last_error (server : t) =
+  Mutex.lock server.mutex;
+  let error = server.last_error in
+  Mutex.unlock server.mutex;
+  error
 
 let has_ci_header name headers =
   let lname = String.lowercase_ascii name in
@@ -743,14 +755,34 @@ let poll_loop (server : t) listener wake_read =
 
     if Atomic.get server.running then loop ()
   in
-  try loop ()
-  with exn ->
-    Log.err (fun m -> m "Server loop crashed: %s" (Printexc.to_string exn))
+  loop ()
 
 let close_fd_opt fd_opt =
   match fd_opt with
   | None -> ()
   | Some fd -> (try Unix.close fd with _ -> ())
+
+let finalize_server_loop (server : t) =
+  Atomic.set server.running false;
+  stop_workers server;
+  Hashtbl.iter (fun _fd conn -> close_connection server conn) server.conns;
+  Hashtbl.clear server.conns;
+  Hashtbl.clear server.pending_jobs;
+
+  Mutex.lock server.mutex;
+  close_fd_opt server.listener;
+  close_fd_opt server.wake_read;
+  close_fd_opt server.wake_write;
+  server.listener <- None;
+  server.wake_read <- None;
+  server.wake_write <- None;
+  server.loop_domain <- None;
+  Mutex.unlock server.mutex;
+
+  (match Atomic.get active_server with
+   | Some active when active == server -> Atomic.set active_server None
+   | _ -> ());
+  Log.info (fun m -> m "HTTP server loop stopped")
 
 let create ~host ~port ?(max_connections=100) ?(max_pending_jobs=256) ?(idle_timeout_s=30.0) () =
   let worker_pool = {
@@ -771,6 +803,7 @@ let create ~host ~port ?(max_connections=100) ?(max_pending_jobs=256) ?(idle_tim
     routes = [];
     mutex = Mutex.create ();
     running = Atomic.make false;
+    last_error = None;
     listener = None;
     wake_read = None;
     wake_write = None;
@@ -804,6 +837,7 @@ let start (server : t) =
     Unix.set_nonblock wake_write;
 
     Mutex.lock server.mutex;
+    server.last_error <- None;
     server.listener <- Some listener;
     server.wake_read <- Some wake_read;
     server.wake_write <- Some wake_write;
@@ -815,22 +849,20 @@ let start (server : t) =
 
     let loop = Domain.spawn (fun () ->
       Log.info (fun m -> m "HTTP server started on %s:%d" server.host server.port);
-      poll_loop server listener wake_read;
-      Hashtbl.iter (fun _fd conn -> close_connection server conn) server.conns;
-      Hashtbl.clear server.conns;
-      Hashtbl.clear server.pending_jobs;
-
-      Mutex.lock server.mutex;
-      close_fd_opt server.listener;
-      close_fd_opt server.wake_read;
-      close_fd_opt server.wake_write;
-      server.listener <- None;
-      server.wake_read <- None;
-      server.wake_write <- None;
-      server.loop_domain <- None;
-      Mutex.unlock server.mutex;
-
-      Log.info (fun m -> m "HTTP server loop stopped")
+      (try
+         poll_loop server listener wake_read
+       with exn ->
+         let error = Printexc.to_string exn in
+         let backtrace = Printexc.get_backtrace () in
+         let detail =
+           if String.trim backtrace = "" then error
+           else error ^ "\n" ^ backtrace
+         in
+         Log.err (fun m -> m "Server loop crashed: %s" detail);
+         set_last_error server detail;
+         Atomic.set server.running false;
+         signal_wakeup server);
+      finalize_server_loop server
     ) in
 
     Mutex.lock server.mutex;
@@ -841,28 +873,24 @@ let start (server : t) =
   end
 
 let stop (server : t) =
-  if not (Atomic.get server.running) then
-    Log.warn (fun m -> m "HTTP server not running")
-  else begin
+  if Atomic.get server.running then begin
     Atomic.set server.running false;
     signal_wakeup server;
+  end else
+    Log.warn (fun m -> m "HTTP server not running");
 
-    let loop_domain =
-      Mutex.lock server.mutex;
-      let loop = server.loop_domain in
-      Mutex.unlock server.mutex;
-      loop
-    in
-    (match loop_domain with
-     | None -> ()
-     | Some d -> Domain.join d);
-
-    stop_workers server;
-
-    (match Atomic.get active_server with
-     | Some active when active == server -> Atomic.set active_server None
-     | _ -> ())
-  end
+  let loop_domain =
+    Mutex.lock server.mutex;
+    let loop = server.loop_domain in
+    Mutex.unlock server.mutex;
+    loop
+  in
+  (match loop_domain with
+   | None -> ()
+   | Some d -> Domain.join d)
 
 let is_running (server : t) =
   Atomic.get server.running
+
+let last_error (server : t) =
+  get_last_error server

@@ -337,7 +337,28 @@ let test_ui_routes_and_cache_headers () =
       "private, no-store"
       (Option.value ~default:"" (response_header session_json "cache-control")))
 
+let test_http_server_records_fatal_loop_error () =
+  let port = find_free_port () in
+  let server = Http_server.create ~host:"127.0.0.1" ~port () in
+  ignore (Http_server.start server);
+  wait_until "raw HTTP server startup" (fun () -> Http_server.is_running server);
+  let listener =
+    match server.Http_server.listener with
+    | Some fd -> fd
+    | None -> failwith "expected listener to be present after startup"
+  in
+  Unix.close listener;
+  wait_until "raw HTTP server crash" (fun () -> not (Http_server.is_running server));
+  let last_error =
+    match Http_server.last_error server with
+    | Some error -> error
+    | None -> failwith "expected HTTP server crash reason to be recorded"
+  in
+  assert_true "http server crash reason should not be empty" (String.trim last_error <> "");
+  Http_server.stop server
+
 let () =
   test_server_info_and_session_launch ();
   test_prompt_endpoint_accepts_immediately ();
-  test_ui_routes_and_cache_headers ()
+  test_ui_routes_and_cache_headers ();
+  test_http_server_records_fatal_loop_error ()

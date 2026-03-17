@@ -1,7 +1,19 @@
 module Log = (val Logs.src_log (Logs.Src.create "allhands_server") : Logs.LOG)
 
+let synchronized_reporter reporter =
+  let mutex = Mutex.create () in
+  let report src level ~over k msgf =
+    Mutex.lock mutex;
+    Fun.protect
+      ~finally:(fun () -> Mutex.unlock mutex)
+      (fun () -> reporter.Logs.report src level ~over k msgf)
+  in
+  { Logs.report = report }
+
 let run ~host ~port ~service_name ~service_hostname ~bonjour_enabled ~debug =
-  Logs.set_reporter (Logs_fmt.reporter ());
+  Printexc.record_backtrace true;
+  Sys.set_signal Sys.sigpipe Sys.Signal_ignore;
+  Logs.set_reporter (synchronized_reporter (Logs_fmt.reporter ()));
   Logs.set_level (Some (if debug then Logs.Debug else Logs.Info));
   let launch_root_path = Sys.getcwd () in
   let available_launchers = Launcher_catalog.detect_available () in
@@ -26,8 +38,16 @@ let run ~host ~port ~service_name ~service_hostname ~bonjour_enabled ~debug =
            (List.map (fun launcher -> launcher.Launcher_catalog.id) launchers)));
   Log.info (fun m -> m "Bonjour advertised hostname: http://%s:%d" service_hostname port);
   let rec loop () =
-    Unix.sleepf 3600.0;
-    loop ()
+    if Http_server.is_running server.Host_server.http_server then begin
+      Unix.sleepf 0.5;
+      loop ()
+    end else
+      let message =
+        match Http_server.last_error server.Host_server.http_server with
+        | Some error -> "HTTP server stopped unexpectedly: " ^ error
+        | None -> "HTTP server stopped unexpectedly"
+      in
+      failwith message
   in
   try loop ()
   with exn ->
