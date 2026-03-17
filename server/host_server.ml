@@ -9,6 +9,8 @@ type config = {
   service_name : string;
   service_hostname : string;
   bonjour_enabled : bool;
+  launch_root_path : string;
+  available_launchers : Launcher_catalog.launcher list;
 }
 
 type t = {
@@ -243,18 +245,18 @@ let initialize_agent server (session : Agent_session.t) =
             end
       end
 
-let create_session (server : t) (request : Models.create_session_request) =
-  match Worktree_manager.create_worktree ~repo_path:request.repo_path ~session_id:(make_session_id ()) with
+let create_session_with_launcher (server : t) ~repo_path (launcher : Launcher_catalog.launcher) =
+  match Worktree_manager.create_worktree ~repo_path ~session_id:(make_session_id ()) with
   | Error err -> Error err
   | Ok worktree_path ->
       let id = Filename.basename worktree_path in
       let session =
         Agent_session.create
           ~id
-          ~repo_path:request.repo_path
+          ~repo_path
           ~worktree_path
-          ~agent_command:request.agent_command
-          ~agent_args:request.agent_args
+          ~agent_command:launcher.command
+          ~agent_args:launcher.args
       in
       Session_store.add_session server.sessions session;
       ignore (Session_store.append_event server.sessions session.id ~type_:"acp.status"
@@ -325,15 +327,46 @@ let health_handler reqd =
     ("timestamp", `Float (Unix.gettimeofday ()));
   ])
 
+let server_info_handler (server : t) reqd =
+  let server_info =
+    {
+      Models.launch_root_path = server.config.launch_root_path;
+      default_agent = Launcher_catalog.default_agent_id server.config.available_launchers;
+      available_agents =
+        List.map (fun launcher ->
+          {
+            Models.id = launcher.Launcher_catalog.id;
+            display_name = launcher.display_name;
+          })
+          server.config.available_launchers;
+    }
+  in
+  Http_server.respond_json reqd (Models.server_info_to_json server_info)
+
 let create_session_handler (server : t) reqd =
   read_json_body reqd (fun json ->
     match Models.parse_create_session_request json with
     | Error err -> Http_server.respond_json ~status:`Bad_request reqd (Json_utils.error_json err)
     | Ok request ->
-        Http_server.submit_job server.http_server reqd (fun () ->
-          match create_session server request with
-          | Error err -> error_response ~status:`Internal_server_error err
-          | Ok session -> json_response (`Assoc [("session", session_json session)])))
+        begin
+          match Launcher_catalog.resolve server.config.available_launchers request.agent with
+          | None ->
+              Http_server.respond_json ~status:`Bad_request reqd
+                (Json_utils.error_json "Requested agent is not available on this server")
+          | Some launcher ->
+              begin
+                match Launcher_catalog.resolve_folder
+                        ~launch_root_path:server.config.launch_root_path
+                        ~folder_path:request.folder_path with
+                | Error err ->
+                    Http_server.respond_json ~status:`Bad_request reqd (Json_utils.error_json err)
+                | Ok repo_path ->
+                    Http_server.submit_job server.http_server reqd (fun () ->
+                      match create_session_with_launcher server ~repo_path launcher with
+                      | Error err -> error_response ~status:`Internal_server_error err
+                      | Ok session -> json_response (`Assoc [("session", session_json session)]))
+              end
+        end)
 
 let handle_sse (server : t) session_id reqd =
   match find_session server session_id with
@@ -460,6 +493,7 @@ let create config =
       let path, _query = Http_server.split_path_query request.target in
       handle_session_route server request.meth path reqd);
   Http_server.add_route http_server ~method_:(Some `GET) "/healthz" health_handler;
+  Http_server.add_route http_server ~method_:(Some `GET) "/server-info" (server_info_handler server);
   Http_server.add_route http_server ~method_:(Some `POST) "/sessions" (create_session_handler server);
   server
 

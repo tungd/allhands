@@ -131,6 +131,8 @@ let with_server_session name f =
     service_name = "All Hands Test";
     service_hostname = "allhands-test";
     bonjour_enabled = false;
+    launch_root_path = Sys.getcwd ();
+    available_launchers = [];
   } in
   let session = make_session ("session_" ^ name) in
   Host_server.start server;

@@ -1,9 +1,8 @@
 open Yojson.Safe.Util
 
 type create_session_request = {
-  repo_path : string;
-  agent_command : string;
-  agent_args : string list;
+  folder_path : string;
+  agent : string;
 }
 
 type prompt_request = {
@@ -33,19 +32,25 @@ type session_summary = {
   created_at : float;
 }
 
+type available_agent = {
+  id : string;
+  display_name : string;
+}
+
+type server_info = {
+  launch_root_path : string;
+  default_agent : string option;
+  available_agents : available_agent list;
+}
+
 let parse_create_session_request json =
-  match Json_utils.field_string json "repoPath" with
+  match Json_utils.field_string json "folderPath" with
   | Error err -> Error err
-  | Ok repo_path ->
+  | Ok folder_path ->
       begin
-        match Json_utils.field_string json "agentCommand" with
+        match Json_utils.field_string json "agent" with
         | Error err -> Error err
-        | Ok agent_command ->
-            begin
-              match Json_utils.field_string_list json "agentArgs" with
-              | Error err -> Error err
-              | Ok agent_args -> Ok { repo_path; agent_command; agent_args }
-            end
+        | Ok agent -> Ok { folder_path; agent }
       end
 
 let parse_prompt_request json =
@@ -78,7 +83,7 @@ let stream_event_to_json (event : stream_event) =
     ("payload", event.payload);
   ]
 
-let session_summary_to_json summary =
+let session_summary_to_json (summary : session_summary) =
   `Assoc [
     ("id", `String summary.id);
     ("status", `String summary.status);
@@ -89,6 +94,22 @@ let session_summary_to_json summary =
 
 let json_list_of_summaries summaries =
   `List (List.map session_summary_to_json summaries)
+
+let available_agent_to_json (agent : available_agent) =
+  `Assoc [
+    ("id", `String agent.id);
+    ("displayName", `String agent.display_name);
+  ]
+
+let server_info_to_json info =
+  `Assoc [
+    ("launchRootPath", `String info.launch_root_path);
+    ("defaultAgent",
+      match info.default_agent with
+      | Some agent -> `String agent
+      | None -> `Null);
+    ("availableAgents", `List (List.map available_agent_to_json info.available_agents));
+  ]
 
 let text_prompt_blocks text =
   `List [

@@ -19,11 +19,13 @@ test:
 	cd server && ./_build/default/test_session_store.exe
 	cd server && ./_build/default/test_worktree_manager.exe
 	cd server && ./_build/default/test_sse.exe
+	cd server && ./_build/default/test_launcher_catalog.exe
+	cd server && ./_build/default/test_host_server_api.exe
 	cd server && ./_build/default/test_integration.exe
 	cd ios && swift test --package-path AllHandsKit
 
 run-server:
-	cd server && dune exec ./allhands_server.exe -- --host 0.0.0.0 --port 8080 --service-name "All Hands" --service-hostname allhands
+	cd server && dune exec ./allhands_server.exe -- --host 0.0.0.0 --port 8080
 
 open-ios:
 	cd ios && xcodegen generate

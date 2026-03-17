@@ -3,10 +3,11 @@
  (wrapped false)
  (libraries h1 iomux yojson logs unix)
  (modules
-  json_utils
-  models
-  acp_transport
-  bonjour_publisher
+ json_utils
+ models
+ launcher_catalog
+ acp_transport
+ bonjour_publisher
   http_server
   worktree_manager
   agent_process
@@ -39,6 +40,16 @@
 (test
  (name test_sse)
  (modules test_sse)
+ (libraries allhands_server_lib yojson unix))
+
+(test
+ (name test_launcher_catalog)
+ (modules test_launcher_catalog)
+ (libraries allhands_server_lib yojson unix))
+
+(test
+ (name test_host_server_api)
+ (modules test_host_server_api)
  (libraries allhands_server_lib yojson unix))
 
 (test
