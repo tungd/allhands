@@ -18,12 +18,14 @@ final class AppModel: ObservableObject {
     @Published var discoveredServers: [DiscoveredServer] = []
     @Published var selectedServer: DiscoveredServer?
     @Published var pendingAuthenticationURL: URL?
+    @Published var webUIBaseURL: URL?
 
     let sessionStore = SessionStore()
 
     private let tailnetProvider: SessionProviding
     private let discoveryService: ServerDiscovering
     private let directSession: URLSession
+    private let webUIProxy = LocalWebUIProxy()
     private var streamTask: Task<Void, Never>?
     private let lastSelectedServerDefaultsKey = "lastSelectedServerID"
     private var hasBootstrapped = false
@@ -57,6 +59,14 @@ final class AppModel: ObservableObject {
 
     var selectedSession: SessionSummary? {
         sessionStore.sessions.first(where: { $0.id == selectedSessionID })
+    }
+
+    var selectedSessionWebURL: URL? {
+        guard let selectedSessionID, let webUIBaseURL else { return nil }
+        return webUIBaseURL
+            .appending(path: "ui")
+            .appending(path: "session")
+            .appending(path: selectedSessionID)
     }
 
     var canCreateSession: Bool {
@@ -133,9 +143,10 @@ final class AppModel: ObservableObject {
         sessionStore.replaceSessions([])
         selectedSessionID = nil
         pendingAuthenticationURL = nil
+        streamTask?.cancel()
         UserDefaults.standard.set(server.id, forKey: lastSelectedServerDefaultsKey)
         onboardingStatus = .connected
-        if await loadServerInfo() {
+        if await startWebUIProxy(for: server), await loadServerInfo() {
             _ = await loadSessions()
         }
     }
@@ -162,6 +173,21 @@ final class AppModel: ObservableObject {
         await discoverServers()
     }
 
+    @discardableResult
+    private func startWebUIProxy(for server: DiscoveredServer) async -> Bool {
+        do {
+            let session = try await urlSession(for: server, operation: .sessionWeb)
+            let localBaseURL = try await webUIProxy.start(remoteBaseURL: server.baseURL, session: session)
+            webUIBaseURL = localBaseURL
+            inlineError = nil
+            return true
+        } catch {
+            webUIBaseURL = nil
+            inlineError = operationErrorMessage(for: error, operation: .sessionWeb, server: server)
+            return false
+        }
+    }
+
     func createSession() async {
         guard let selectedServer, canCreateSession else { return }
         let request = CreateSessionRequest(
@@ -172,7 +198,6 @@ final class AppModel: ObservableObject {
             let session = try await client.createSession(request)
             self.sessionStore.upsert(session: session)
             self.selectedSessionID = session.id
-            self.connectStream(for: session.id)
         }
     }
 

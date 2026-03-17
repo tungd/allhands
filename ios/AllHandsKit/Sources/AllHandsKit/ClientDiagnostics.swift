@@ -11,6 +11,7 @@ public enum ClientOperation: String, Sendable {
     case sessionCreate = "session creation"
     case promptSend = "prompt send"
     case sessionStream = "session stream"
+    case sessionWeb = "session web ui"
 }
 
 public struct ClientOperationError: Error, LocalizedError, Sendable {

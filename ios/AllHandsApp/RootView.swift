@@ -1,6 +1,7 @@
 import AllHandsKit
 import SafariServices
 import SwiftUI
+import WebKit
 
 struct RootView: View {
     @ObservedObject var model: AppModel
@@ -222,32 +223,28 @@ struct RootView: View {
             if case .serverSelection = model.onboardingStatus {
                 serverList
             } else if case .connected = model.onboardingStatus {
-                ScrollView {
-                    LazyVStack(spacing: 12) {
-                        ForEach(model.events(for: model.selectedSessionID)) { event in
-                            EventCard(event: event)
-                        }
+                if let webURL = model.selectedSessionWebURL {
+                    WebSessionView(url: webURL)
+                        .clipShape(RoundedRectangle(cornerRadius: 18))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18)
+                                .strokeBorder(Color.black.opacity(0.08), lineWidth: 1)
+                        )
+                } else if model.selectedSessionID != nil {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ProgressView("Preparing web UI…")
+                        Text("The app is starting a local bridge for the hosted session UI.")
+                            .foregroundStyle(.secondary)
                     }
-                }
-
-                HStack(alignment: .bottom, spacing: 12) {
-                    TextField("Steer the agent…", text: $model.promptText, axis: .vertical)
-                        .textFieldStyle(.roundedBorder)
-                    Button("Send") {
-                        Task { await model.sendPrompt() }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(model.selectedSessionID == nil || model.promptText.isEmpty)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                } else {
+                    Spacer()
                 }
             } else {
                 Spacer()
             }
         }
         .padding(24)
-        .onChange(of: model.selectedSessionID) { _, newValue in
-            guard let newValue else { return }
-            model.connectStream(for: newValue)
-        }
     }
 
     private var statusTitle: String {
@@ -351,63 +348,22 @@ private struct SafariSheet: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: SFSafariViewController, context: Context) {}
 }
 
-private struct EventCard: View {
-    let event: StreamEvent
+private struct WebSessionView: UIViewRepresentable {
+    let url: URL
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(event.type)
-                    .font(.system(size: 12, weight: .bold, design: .monospaced))
-                    .foregroundStyle(tagColor)
-                Spacer()
-                Text("#\(event.seq)")
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            }
-            Text(payloadDescription(event.payload))
-                .font(.system(size: 14, weight: .regular, design: .monospaced))
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(14)
-        .background(AllHandsPalette.cardBackground, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(tagColor.opacity(0.25), lineWidth: 1)
-        )
+    func makeUIView(context: Context) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
+        webView.isOpaque = false
+        webView.backgroundColor = .clear
+        webView.load(URLRequest(url: url))
+        return webView
     }
 
-    private var tagColor: Color {
-        switch event.type {
-        case "acp.error":
-            return AllHandsPalette.errorForeground
-        case "acp.patch":
-            return AllHandsPalette.patchForeground
-        case "acp.call":
-            return AllHandsPalette.callForeground
-        default:
-            return AllHandsPalette.defaultForeground
-        }
-    }
-
-    private func payloadDescription(_ payload: JSONValue) -> String {
-        switch payload {
-        case .string(let value):
-            return value
-        case .number(let value):
-            return String(value)
-        case .bool(let value):
-            return String(value)
-        case .null:
-            return "null"
-        case .array(let values):
-            return values.map(payloadDescription).joined(separator: "\n")
-        case .object(let object):
-            return object
-                .sorted(by: { $0.key < $1.key })
-                .map { key, value in "\(key): \(payloadDescription(value))" }
-                .joined(separator: "\n")
-        }
+    func updateUIView(_ webView: WKWebView, context: Context) {
+        guard webView.url != url else { return }
+        webView.load(URLRequest(url: url))
     }
 }
 
