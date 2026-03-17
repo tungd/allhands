@@ -59,7 +59,9 @@ public final class SSEClient: Sendable {
         }
         let (bytes, response) = try await session.bytes(for: request)
         guard let httpResponse = response as? HTTPURLResponse, (200..<300).contains(httpResponse.statusCode) else {
-            throw APIClientError.invalidResponse
+            throw APIClientError.invalidResponse(
+                APIRequestDescriptor(method: "GET", path: url.path.isEmpty ? "/" : url.path)
+            )
         }
 
         return AsyncThrowingStream { continuation in

@@ -1,5 +1,6 @@
 import AllHandsKit
 import Foundation
+import OSLog
 import SwiftUI
 
 @MainActor
@@ -22,12 +23,14 @@ final class AppModel: ObservableObject {
 
     private let tailnetProvider: SessionProviding
     private let discoveryService: ServerDiscovering
+    private let directSession: URLSession
     private var streamTask: Task<Void, Never>?
     private let lastSelectedServerDefaultsKey = "lastSelectedServerID"
     private var hasBootstrapped = false
     private var bootstrapInFlight = false
     private var signInInFlight = false
     private var completionInFlight = false
+    private let logger = Logger(subsystem: "dev.allhands.ios", category: "AppModel")
 
     init(
         tailnetProvider: SessionProviding? = nil,
@@ -49,6 +52,7 @@ final class AppModel: ObservableObject {
                 await TailnetServerDiscovery.discover(using: provider)
             }
         )
+        self.directSession = URLSession(configuration: .default)
     }
 
     var selectedSession: SessionSummary? {
@@ -126,16 +130,20 @@ final class AppModel: ObservableObject {
     func selectServer(_ server: DiscoveredServer) async {
         selectedServer = server
         serverInfo = nil
+        sessionStore.replaceSessions([])
+        selectedSessionID = nil
         pendingAuthenticationURL = nil
         UserDefaults.standard.set(server.id, forKey: lastSelectedServerDefaultsKey)
         onboardingStatus = .connected
-        await loadServerInfo()
-        await loadSessions()
+        if await loadServerInfo() {
+            _ = await loadSessions()
+        }
     }
 
-    func loadSessions() async {
-        guard let selectedServer else { return }
-        await withClient(baseURL: selectedServer.baseURL) { [self] client in
+    @discardableResult
+    func loadSessions() async -> Bool {
+        guard let selectedServer else { return false }
+        return await withClient(server: selectedServer, operation: .sessionList) { [self] client in
             let sessions = try await client.listSessions()
             self.sessionStore.replaceSessions(sessions)
             if self.selectedSessionID == nil {
@@ -145,8 +153,9 @@ final class AppModel: ObservableObject {
     }
 
     func refreshSelectedServer() async {
-        await loadServerInfo()
-        await loadSessions()
+        if await loadServerInfo() {
+            _ = await loadSessions()
+        }
     }
 
     func retryDiscovery() async {
@@ -159,7 +168,7 @@ final class AppModel: ObservableObject {
             folderPath: sessionConfiguration.folderPath,
             agent: sessionConfiguration.agent
         )
-        await withClient(baseURL: selectedServer.baseURL) { [self] client in
+        await withClient(server: selectedServer, operation: .sessionCreate) { [self] client in
             let session = try await client.createSession(request)
             self.sessionStore.upsert(session: session)
             self.selectedSessionID = session.id
@@ -171,10 +180,8 @@ final class AppModel: ObservableObject {
         guard let selectedSessionID, !promptText.isEmpty, let selectedServer else { return }
         let prompt = promptText
         promptText = ""
-        await withClient(baseURL: selectedServer.baseURL) { [self] client in
+        await withClient(server: selectedServer, operation: .promptSend) { client in
             try await client.sendPrompt(sessionID: selectedSessionID, prompt: PromptRequest(text: prompt))
-            let refreshed = try await client.session(id: selectedSessionID)
-            self.sessionStore.upsert(session: refreshed)
         }
     }
 
@@ -183,7 +190,7 @@ final class AppModel: ObservableObject {
         streamTask?.cancel()
         streamTask = Task {
             do {
-                let session = try await tailnetProvider.makeURLSession()
+                let session = try await urlSession(for: selectedServer, operation: .sessionStream)
                 let sse = SSEClient(session: session)
                 let stream = try await sse.stream(url: selectedServer.baseURL.appending(path: "sessions").appending(path: sessionID).appending(path: "events"))
                 for try await event in stream {
@@ -193,9 +200,12 @@ final class AppModel: ObservableObject {
                         self.sessionStore.append(event: decoded)
                     }
                 }
+            } catch is CancellationError {
+                return
             } catch {
+                let inlineError = self.operationErrorMessage(for: error, operation: .sessionStream, server: selectedServer)
                 await MainActor.run {
-                    self.inlineError = error.localizedDescription
+                    self.inlineError = inlineError
                 }
             }
         }
@@ -237,9 +247,10 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func loadServerInfo() async {
-        guard let selectedServer else { return }
-        await withClient(baseURL: selectedServer.baseURL) { [self] client in
+    @discardableResult
+    private func loadServerInfo() async -> Bool {
+        guard let selectedServer else { return false }
+        return await withClient(server: selectedServer, operation: .serverInfo) { [self] client in
             let info = try await client.serverInfo()
             self.serverInfo = info
             if let existing = info.availableAgents.first(where: { $0.id == self.sessionConfiguration.agent }) {
@@ -255,18 +266,55 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func withClient(baseURL: URL, _ body: @escaping (APIClient) async throws -> Void) async {
+    private func withClient(
+        server: DiscoveredServer,
+        operation: ClientOperation,
+        _ body: @escaping (APIClient) async throws -> Void
+    ) async -> Bool {
         isBusy = true
         defer { isBusy = false }
 
         do {
-            let session = try await tailnetProvider.makeURLSession()
-            let client = APIClient(baseURL: baseURL, session: session)
+            let client = try await apiClient(for: server, operation: operation)
             try await body(client)
             inlineError = nil
+            return true
         } catch {
-            inlineError = error.localizedDescription
+            inlineError = operationErrorMessage(for: error, operation: operation, server: server)
+            return false
         }
+    }
+
+    private func apiClient(for server: DiscoveredServer, operation: ClientOperation) async throws -> APIClient {
+        let session = try await urlSession(for: server, operation: operation)
+        return APIClient(baseURL: server.baseURL, session: session)
+    }
+
+    private func urlSession(for server: DiscoveredServer, operation: ClientOperation) async throws -> URLSession {
+        logger.debug(
+            "Starting \(operation.rawValue, privacy: .public) for \(server.baseURL.absoluteString, privacy: .public) source=\(server.source.rawValue, privacy: .public) transport=\(server.transport.rawValue, privacy: .public)"
+        )
+        switch server.transport {
+        case .direct:
+            return directSession
+        case .tailnet:
+            return try await tailnetProvider.makeURLSession()
+        }
+    }
+
+    private func operationErrorMessage(
+        for error: Error,
+        operation: ClientOperation,
+        server: DiscoveredServer
+    ) -> String {
+        logger.error(
+            "Operation \(operation.rawValue, privacy: .public) failed for \(server.baseURL.absoluteString, privacy: .public) source=\(server.source.rawValue, privacy: .public) transport=\(server.transport.rawValue, privacy: .public) error=\(String(describing: error), privacy: .public)"
+        )
+        return ClientOperationError(
+            operation: operation,
+            server: server,
+            underlyingDescription: error.localizedDescription
+        ).localizedDescription
     }
 
     private func withTimeout<T: Sendable>(

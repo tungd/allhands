@@ -11,7 +11,7 @@ struct RootView: View {
             sidebar
         } detail: {
             detailPane
-                .background(Color(red: 0.98, green: 0.97, blue: 0.95))
+                .background(AllHandsPalette.detailBackground)
         }
         .task {
             await model.bootstrap()
@@ -215,8 +215,8 @@ struct RootView: View {
                 Text(inlineError)
                     .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
-                    .foregroundStyle(Color.red)
+                    .background(AllHandsPalette.errorBackground, in: RoundedRectangle(cornerRadius: 12))
+                    .foregroundStyle(AllHandsPalette.errorForeground)
             }
 
             if case .serverSelection = model.onboardingStatus {
@@ -370,7 +370,7 @@ private struct EventCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(14)
-        .background(Color.white, in: RoundedRectangle(cornerRadius: 16))
+        .background(AllHandsPalette.cardBackground, in: RoundedRectangle(cornerRadius: 16))
         .overlay(
             RoundedRectangle(cornerRadius: 16)
                 .stroke(tagColor.opacity(0.25), lineWidth: 1)
@@ -380,13 +380,13 @@ private struct EventCard: View {
     private var tagColor: Color {
         switch event.type {
         case "acp.error":
-            return .red
+            return AllHandsPalette.errorForeground
         case "acp.patch":
-            return .orange
+            return AllHandsPalette.patchForeground
         case "acp.call":
-            return .blue
+            return AllHandsPalette.callForeground
         default:
-            return .green
+            return AllHandsPalette.defaultForeground
         }
     }
 
@@ -409,4 +409,14 @@ private struct EventCard: View {
                 .joined(separator: "\n")
         }
     }
+}
+
+private enum AllHandsPalette {
+    static let detailBackground = Color(.sRGB, red: 0.98, green: 0.97, blue: 0.95, opacity: 1)
+    static let cardBackground = Color(.sRGB, red: 1, green: 1, blue: 1, opacity: 1)
+    static let errorBackground = Color(.sRGB, red: 0.96, green: 0.88, blue: 0.88, opacity: 1)
+    static let errorForeground = Color(.sRGB, red: 0.72, green: 0.16, blue: 0.18, opacity: 1)
+    static let patchForeground = Color(.sRGB, red: 0.84, green: 0.47, blue: 0.11, opacity: 1)
+    static let callForeground = Color(.sRGB, red: 0.19, green: 0.43, blue: 0.90, opacity: 1)
+    static let defaultForeground = Color(.sRGB, red: 0.19, green: 0.55, blue: 0.27, opacity: 1)
 }

@@ -125,6 +125,52 @@ func discoveryMergesTailnetResultsAndPrefersBonjourForSameHost() async {
 }
 
 @Test
+func discoveredServerSelectsTransportFromSource() {
+    let bonjourServer = DiscoveredServer(
+        id: "bonjour",
+        name: "Bonjour",
+        baseURL: URL(string: "http://bonjour.local:21991")!,
+        hostname: "bonjour.local",
+        port: 21991,
+        source: .bonjour
+    )
+    let tailnetServer = DiscoveredServer(
+        id: "tailnet",
+        name: "Tailnet",
+        baseURL: URL(string: "http://tailnet.ts.net:21991")!,
+        hostname: "tailnet.ts.net",
+        port: 21991,
+        source: .tailnet
+    )
+
+    #expect(bonjourServer.transport == .direct)
+    #expect(tailnetServer.transport == .tailnet)
+}
+
+@Test
+func clientOperationErrorIncludesPhaseHostAndSource() {
+    let server = DiscoveredServer(
+        id: "allhands",
+        name: "All Hands",
+        baseURL: URL(string: "http://allhands.local:21991")!,
+        hostname: "allhands.local",
+        port: 21991,
+        source: .bonjour
+    )
+
+    let error = ClientOperationError(
+        operation: .serverInfo,
+        server: server,
+        underlyingDescription: "GET /server-info failed: The request timed out."
+    )
+
+    #expect(
+        error.errorDescription
+            == "Failed during server info for allhands.local over bonjour: GET /server-info failed: The request timed out."
+    )
+}
+
+@Test
 func serverInfoDecodes() throws {
     let data = Data(
         """
@@ -143,6 +189,16 @@ func serverInfoDecodes() throws {
     #expect(decoded.launchRootPath == "/Users/tung/Projects/std23/allhands")
     #expect(decoded.defaultAgent == "codex")
     #expect(decoded.availableAgents.map(\.id) == ["codex", "claude"])
+}
+
+@Test
+func apiClientErrorIncludesEndpointContext() {
+    let error = APIClientError.httpStatus(
+        APIRequestDescriptor(method: "GET", path: "/sessions"),
+        503
+    )
+
+    #expect(error.localizedDescription == "GET /sessions returned HTTP 503.")
 }
 
 @Test
