@@ -1,4 +1,4 @@
-import { formatTimestamp, normalizeEvent } from "./event_utils.js";
+import { formatTimestamp } from "./event_utils.js";
 
 const m = window.m;
 
@@ -124,51 +124,64 @@ function renderToolActions(state, actions, callInfo) {
   ]);
 }
 
-function renderEventCard(state, actions, event) {
-  const model = normalizeEvent(event);
-  const timeLabel = formatTimestamp(event.timestamp);
-  const cardClass = `event-card event-${model.kind}`;
-
-  if (model.kind === "call") {
-    const args = formatArguments(model.callInfo.arguments);
-    return m("article", { class: cardClass, key: event.id }, [
-      m(".event-meta", [
-        m("span.event-kind", model.title),
-        m("span.event-time", timeLabel),
-      ]),
-      model.callInfo.callId ? m("p.event-call-id", `Call ID: ${model.callInfo.callId}`) : null,
-      args ? m("pre.code-block", args) : null,
-      model.body ? m("p.event-body", model.body) : null,
-      renderToolActions(state, actions, model.callInfo),
-    ]);
-  }
-
-  if (model.kind === "patch") {
-    return m("article", { class: cardClass, key: event.id }, [
-      m(".event-meta", [
-        m("span.event-kind", model.title),
-        m("span.event-time", timeLabel),
-      ]),
-      m("pre.code-block", model.body),
-    ]);
-  }
-
-  if (model.kind === "status") {
-    return m("article", { class: cardClass, key: event.id }, [
-      m(".event-meta", [
-        m("span.event-kind", model.title),
-        m("span.event-time", timeLabel),
-      ]),
-      model.body ? m("p.event-body", model.body) : null,
-    ]);
-  }
-
-  return m("article", { class: cardClass, key: event.id }, [
+function renderThoughtItem(item) {
+  return m("article", { class: "event-card event-thought", key: item.id }, [
     m(".event-meta", [
-      m("span.event-kind", model.title),
+      m("span.event-kind", item.title),
+      m("span.event-time", formatTimestamp(item.timestamp)),
+    ]),
+    item.body ? m("p.event-body event-body-thought", item.body) : null,
+  ]);
+}
+
+function renderEventCard(state, actions, item) {
+  const timeLabel = formatTimestamp(item.timestamp);
+  const cardClass = `event-card event-${item.kind}`;
+
+  if (item.kind === "thought") {
+    return renderThoughtItem(item);
+  }
+
+  if (item.kind === "call") {
+    const args = formatArguments(item.callInfo.arguments);
+    return m("article", { class: `${cardClass} event-system`, key: item.id }, [
+      m(".event-meta", [
+        m("span.event-kind", item.title),
+        m("span.event-time", timeLabel),
+      ]),
+      item.callInfo.callId ? m("p.event-call-id", `Call ID: ${item.callInfo.callId}`) : null,
+      args ? m("pre.code-block", args) : null,
+      item.body ? m("p.event-body", item.body) : null,
+      renderToolActions(state, actions, item.callInfo),
+    ]);
+  }
+
+  if (item.kind === "patch") {
+    return m("article", { class: `${cardClass} event-system`, key: item.id }, [
+      m(".event-meta", [
+        m("span.event-kind", item.title),
+        m("span.event-time", timeLabel),
+      ]),
+      m("pre.code-block", item.body),
+    ]);
+  }
+
+  if (item.kind === "status") {
+    return m("article", { class: `${cardClass} event-system`, key: item.id }, [
+      m(".event-meta", [
+        m("span.event-kind", item.title),
+        m("span.event-time", timeLabel),
+      ]),
+      item.body ? m("p.event-body", item.body) : null,
+    ]);
+  }
+
+  return m("article", { class: `${cardClass} event-system`, key: item.id }, [
+    m(".event-meta", [
+      m("span.event-kind", item.title),
       m("span.event-time", timeLabel),
     ]),
-    model.body ? m("p.event-body", model.body) : null,
+    item.body ? m("p.event-body", item.body) : null,
   ]);
 }
 
@@ -193,13 +206,13 @@ function renderSessionTimeline(state, actions) {
     );
   }
 
-  if (!state.events.length) {
+  if (!state.timelineItems.length) {
     return renderStatePanel("Session is connected", "Events will appear here as the agent produces updates.");
   }
 
   return m(
     ".timeline",
-    state.events.map((event) => renderEventCard(state, actions, event)),
+    state.timelineItems.map((item) => renderEventCard(state, actions, item)),
   );
 }
 

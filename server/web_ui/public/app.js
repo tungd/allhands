@@ -36,6 +36,12 @@ function createSessionController(sessionId) {
   function handleStreamEvent(event) {
     try {
       const payload = JSON.parse(event.data);
+      console.log("[allhands:event]", {
+        type: payload.type,
+        id: payload.id,
+        seq: payload.seq,
+        payload: payload.payload,
+      });
       dispatch({ type: "events/add", events: [payload] });
     } catch (error) {
       dispatch({

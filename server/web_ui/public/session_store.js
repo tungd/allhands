@@ -1,10 +1,11 @@
-import { mergeEvents, readCallInfo } from "./event_utils.js";
+import { buildTimelineItems, mergeEvents, readCallInfo } from "./event_utils.js";
 
 export function createInitialState(sessionId) {
   return {
     sessionId,
     session: null,
     events: [],
+    timelineItems: [],
     sessionState: "loading",
     connectionState: "idle",
     promptText: "",
@@ -194,6 +195,7 @@ export function reduceSessionState(state, action) {
         {
           ...state,
           events: mergedEvents,
+          timelineItems: buildTimelineItems(mergedEvents),
         },
         action.events,
       );

@@ -115,6 +115,48 @@ export function normalizeEvent(event = {}) {
   };
 }
 
+export function buildTimelineItems(events = []) {
+  const items = [];
+  let activeThought = null;
+
+  for (const event of events) {
+    const model = normalizeEvent(event);
+
+    if (model.kind === "thought") {
+      if (!activeThought) {
+        activeThought = {
+          id: event.id ?? `thought-${items.length}`,
+          kind: "thought",
+          title: model.title,
+          body: model.body,
+          timestamp: event.timestamp,
+          events: [event],
+        };
+        items.push(activeThought);
+        continue;
+      }
+
+      activeThought.body += model.body;
+      activeThought.timestamp = event.timestamp;
+      activeThought.events.push(event);
+      continue;
+    }
+
+    activeThought = null;
+    items.push({
+      id: event.id ?? `${model.kind}-${items.length}`,
+      kind: model.kind,
+      title: model.title,
+      body: model.body,
+      timestamp: event.timestamp,
+      event,
+      callInfo: model.callInfo ?? null,
+    });
+  }
+
+  return items;
+}
+
 export function mergeEvents(existing, incoming) {
   const byId = new Map();
   for (const event of existing) {
