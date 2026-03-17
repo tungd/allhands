@@ -34,15 +34,18 @@ private final class BonjourBrowserCoordinator: NSObject, NetServiceBrowserDelega
     }
 
     func netServiceDidResolveAddress(_ sender: NetService) {
-        guard let hostName = sender.hostName?.trimmingCharacters(in: CharacterSet(charactersIn: ".")),
-              sender.port > 0 else {
+        guard sender.port > 0 else {
             return
         }
 
         let metadata = Self.decodeTXTRecord(sender.txtRecordData())
         let name = metadata["name"] ?? sender.name
-        let hostname = hostName
-        let identifier = metadata["hostname"] ?? hostName
+        guard let hostname =
+            Self.normalizedHostName(sender.hostName)
+            ?? Self.normalizedHostName(metadata["hostname"]) else {
+            return
+        }
+        let identifier = metadata["hostname"] ?? hostname
         let baseURL = URL(string: "http://\(hostname):\(sender.port)")!
 
         lock.lock()
@@ -58,7 +61,8 @@ private final class BonjourBrowserCoordinator: NSObject, NetServiceBrowserDelega
     }
 
     func netService(_ sender: NetService, didNotResolve errorDict: [String: NSNumber]) {
-        finish()
+        let _ = sender
+        let _ = errorDict
     }
 
     private func currentServers() -> [DiscoveredServer] {
@@ -85,6 +89,16 @@ private final class BonjourBrowserCoordinator: NSObject, NetServiceBrowserDelega
         return NetService.dictionary(fromTXTRecord: data).reduce(into: [:]) { result, entry in
             result[entry.key] = String(data: entry.value, encoding: .utf8)
         }
+    }
+
+    private static func normalizedHostName(_ rawValue: String?) -> String? {
+        guard let rawValue else { return nil }
+        let trimmed = rawValue.trimmingCharacters(in: CharacterSet(charactersIn: ".")).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if trimmed.contains(".") {
+            return trimmed
+        }
+        return "\(trimmed).local"
     }
 }
 #endif

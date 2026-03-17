@@ -41,47 +41,22 @@ struct RootView: View {
     private var onboardingSidebar: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("All Hands")
-                .font(.system(size: 30, weight: .black, design: .rounded))
+                .font(.title)
             Text("Tailscale is the default transport. Sign in, discover your server, and attach automatically.")
-                .font(.system(size: 14, weight: .medium, design: .rounded))
                 .foregroundStyle(.secondary)
+            Text(statusTitle)
+                .font(.headline)
+            Text(statusSubtitle)
+                .foregroundStyle(.secondary)
+            onboardingControls
 
-            RoundedRectangle(cornerRadius: 24)
-                .fill(
-                    LinearGradient(
-                        colors: [Color(red: 0.11, green: 0.18, blue: 0.28), Color(red: 0.18, green: 0.42, blue: 0.35)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .overlay(alignment: .leading) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text(statusTitle)
-                            .font(.system(size: 22, weight: .bold, design: .rounded))
-                            .foregroundStyle(.white)
-                        Text(statusSubtitle)
-                            .font(.system(size: 14, weight: .medium, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.9))
-                        onboardingControls
-                    }
-                    .padding(20)
-                }
-                .frame(maxWidth: .infinity, minHeight: 280)
-
-            if !model.discoveredServers.isEmpty {
+            if showsServerListInOnboarding {
                 serverList
             }
 
             Spacer()
         }
         .padding(20)
-        .background(
-            LinearGradient(
-                colors: [Color(red: 0.95, green: 0.92, blue: 0.86), Color(red: 0.88, green: 0.91, blue: 0.95)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        )
     }
 
     private var onboardingControls: some View {
@@ -91,34 +66,25 @@ struct RootView: View {
                 Button("Connect Tailscale") {
                     Task { await model.beginSignIn() }
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.white)
-                .foregroundStyle(.black)
             case .authInProgress:
                 ProgressView()
-                    .tint(.white)
                 Button("I Finished Sign-In") {
                     Task { await model.completeAuthentication() }
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.white)
-                .foregroundStyle(.black)
             case .discovering:
                 ProgressView("Discovering servers…")
-                    .tint(.white)
-                    .foregroundStyle(.white)
+            case .noServers:
+                Button("Retry Discovery") {
+                    Task { await model.retryDiscovery() }
+                }
             case .serverSelection:
                 Text("Choose a discovered server.")
-                    .foregroundStyle(.white)
             case .connected:
                 EmptyView()
             case .error:
                 Button("Retry Tailscale Setup") {
                     Task { await model.beginSignIn() }
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.white)
-                .foregroundStyle(.black)
             }
         }
     }
@@ -130,40 +96,50 @@ struct RootView: View {
             sessionList
         }
         .padding(20)
-        .background(
-            LinearGradient(
-                colors: [Color(red: 0.95, green: 0.92, blue: 0.86), Color(red: 0.88, green: 0.91, blue: 0.95)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        )
     }
 
     private var sessionConfigurationPanel: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(model.selectedServer?.name ?? "All Hands")
-                .font(.system(size: 28, weight: .black, design: .rounded))
+                .font(.title2)
             Text(model.selectedServer?.baseURL.absoluteString ?? "Connecting")
-                .font(.system(size: 13, weight: .medium, design: .rounded))
                 .foregroundStyle(.secondary)
-            TextField("Repo path", text: $model.sessionConfiguration.repoPath)
+            Group {
+                if let serverInfo = model.serverInfo {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Launch Root")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(serverInfo.launchRootPath)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.primary)
+                            .textSelection(.enabled)
+                    }
+                    if model.availableAgents.isEmpty {
+                        Text("No supported ACP launchers were detected on this server.")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    } else {
+                        Picker("Agent", selection: $model.sessionConfiguration.agent) {
+                            ForEach(model.availableAgents) { agent in
+                                Text(agent.displayName).tag(agent.id)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                } else {
+                    ProgressView("Loading server info…")
+                }
+            }
+            TextField("Folder path", text: $model.sessionConfiguration.folderPath)
                 .textFieldStyle(.roundedBorder)
-            TextField("Agent command", text: $model.sessionConfiguration.agentCommand)
-                .textFieldStyle(.roundedBorder)
-            TextField("Agent args (space separated)", text: Binding(
-                get: { model.sessionConfiguration.agentArgs.joined(separator: " ") },
-                set: { model.sessionConfiguration.agentArgs = $0.split(separator: " ").map(String.init) }
-            ))
-            .textFieldStyle(.roundedBorder)
             HStack {
                 Button("Refresh") {
-                    Task { await model.loadSessions() }
+                    Task { await model.refreshSelectedServer() }
                 }
-                .buttonStyle(.bordered)
                 Button("Create Session") {
                     Task { await model.createSession() }
                 }
-                .buttonStyle(.borderedProminent)
                 .disabled(!model.canCreateSession)
             }
         }
@@ -179,9 +155,8 @@ struct RootView: View {
                 } label: {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(server.name)
-                            .font(.system(size: 15, weight: .semibold, design: .rounded))
                         Text(server.baseURL.absoluteString)
-                            .font(.system(size: 11, weight: .regular, design: .monospaced))
+                            .font(.caption.monospaced())
                             .foregroundStyle(.secondary)
                         Text(server.source.rawValue)
                             .font(.caption)
@@ -189,10 +164,17 @@ struct RootView: View {
                     }
                     .padding(.vertical, 6)
                 }
-                .buttonStyle(.plain)
             }
             .frame(minHeight: 160)
-            .scrollContentBackground(.hidden)
+        }
+    }
+
+    private var showsServerListInOnboarding: Bool {
+        switch model.onboardingStatus {
+        case .serverSelection:
+            return true
+        default:
+            return !model.discoveredServers.isEmpty
         }
     }
 
@@ -200,18 +182,17 @@ struct RootView: View {
         List(model.sessionStore.sessions, selection: $model.selectedSessionID) { session in
             VStack(alignment: .leading, spacing: 4) {
                 Text(session.id)
-                    .font(.system(size: 15, weight: .semibold, design: .monospaced))
+                    .font(.body.monospaced())
                 Text(session.status.uppercased())
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Text(session.worktreePath)
-                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+                    .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
             .padding(.vertical, 6)
         }
-        .scrollContentBackground(.hidden)
     }
 
     private var detailPane: some View {
@@ -238,7 +219,9 @@ struct RootView: View {
                     .foregroundStyle(Color.red)
             }
 
-            if case .connected = model.onboardingStatus {
+            if case .serverSelection = model.onboardingStatus {
+                serverList
+            } else if case .connected = model.onboardingStatus {
                 ScrollView {
                     LazyVStack(spacing: 12) {
                         ForEach(model.events(for: model.selectedSessionID)) { event in
@@ -275,6 +258,8 @@ struct RootView: View {
             return "Finish Browser Sign-In"
         case .discovering:
             return "Finding Servers"
+        case .noServers:
+            return "No Servers Found"
         case .serverSelection:
             return "Choose Your Host"
         case .connected:
@@ -292,6 +277,8 @@ struct RootView: View {
             return "The app opened the Tailscale sign-in flow in your browser. Return here when it completes."
         case .discovering:
             return "Browsing the local network for Bonjour-advertised All Hands servers."
+        case .noServers:
+            return "Discovery completed, but no All Hands server responded."
         case .serverSelection:
             return "Multiple servers responded. Pick the one you want to attach to."
         case .connected:
@@ -309,6 +296,8 @@ struct RootView: View {
             return "Waiting For Authentication"
         case .discovering:
             return "Discovering Server"
+        case .noServers:
+            return "No Server Found"
         case .serverSelection:
             return "Select A Server"
         case .connected:
@@ -330,6 +319,8 @@ struct RootView: View {
             return "Browser auth flow in progress"
         case .discovering:
             return "Bonjour discovery"
+        case .noServers:
+            return "No discovered hosts"
         case .serverSelection:
             return "Select from discovered hosts"
         case .connected:

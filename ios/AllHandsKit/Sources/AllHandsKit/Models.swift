@@ -47,14 +47,12 @@ public enum JSONValue: Codable, Equatable, Sendable {
 }
 
 public struct CreateSessionRequest: Codable, Equatable, Sendable {
-    public var repoPath: String
-    public var agentCommand: String
-    public var agentArgs: [String]
+    public var folderPath: String
+    public var agent: String
 
-    public init(repoPath: String, agentCommand: String, agentArgs: [String]) {
-        self.repoPath = repoPath
-        self.agentCommand = agentCommand
-        self.agentArgs = agentArgs
+    public init(folderPath: String, agent: String) {
+        self.folderPath = folderPath
+        self.agent = agent
     }
 }
 
@@ -120,20 +118,41 @@ public enum OnboardingStatus: Equatable, Sendable {
     case signedOut
     case authInProgress
     case discovering
+    case noServers
     case serverSelection
     case connected
     case error(String)
 }
 
 public struct SessionCreationConfiguration: Equatable, Sendable {
-    public var repoPath: String
-    public var agentCommand: String
-    public var agentArgs: [String]
+    public var folderPath: String
+    public var agent: String
 
-    public init(repoPath: String, agentCommand: String, agentArgs: [String]) {
-        self.repoPath = repoPath
-        self.agentCommand = agentCommand
-        self.agentArgs = agentArgs
+    public init(folderPath: String, agent: String) {
+        self.folderPath = folderPath
+        self.agent = agent
+    }
+}
+
+public struct AvailableAgent: Codable, Equatable, Identifiable, Sendable {
+    public var id: String
+    public var displayName: String
+
+    public init(id: String, displayName: String) {
+        self.id = id
+        self.displayName = displayName
+    }
+}
+
+public struct ServerInfo: Codable, Equatable, Sendable {
+    public var launchRootPath: String
+    public var defaultAgent: String?
+    public var availableAgents: [AvailableAgent]
+
+    public init(launchRootPath: String, defaultAgent: String?, availableAgents: [AvailableAgent]) {
+        self.launchRootPath = launchRootPath
+        self.defaultAgent = defaultAgent
+        self.availableAgents = availableAgents
     }
 }
 

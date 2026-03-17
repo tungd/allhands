@@ -5,10 +5,10 @@ import SwiftUI
 @MainActor
 final class AppModel: ObservableObject {
     @Published var sessionConfiguration = SessionCreationConfiguration(
-        repoPath: FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.path ?? "/",
-        agentCommand: "/usr/bin/env",
-        agentArgs: ["python3", "server/test_support/fake_acp_agent.py"]
+        folderPath: ".",
+        agent: ""
     )
+    @Published var serverInfo: ServerInfo?
     @Published var selectedSessionID: String?
     @Published var promptText = ""
     @Published var inlineError: String?
@@ -53,6 +53,14 @@ final class AppModel: ObservableObject {
 
     var canCreateSession: Bool {
         selectedServer != nil
+            && serverInfo != nil
+            && !(serverInfo?.availableAgents.isEmpty ?? true)
+            && !sessionConfiguration.agent.isEmpty
+            && !sessionConfiguration.folderPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var availableAgents: [AvailableAgent] {
+        serverInfo?.availableAgents ?? []
     }
 
     func bootstrap() async {
@@ -113,9 +121,11 @@ final class AppModel: ObservableObject {
 
     func selectServer(_ server: DiscoveredServer) async {
         selectedServer = server
+        serverInfo = nil
         pendingAuthenticationURL = nil
         UserDefaults.standard.set(server.id, forKey: lastSelectedServerDefaultsKey)
         onboardingStatus = .connected
+        await loadServerInfo()
         await loadSessions()
     }
 
@@ -130,12 +140,20 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func refreshSelectedServer() async {
+        await loadServerInfo()
+        await loadSessions()
+    }
+
+    func retryDiscovery() async {
+        await discoverServers()
+    }
+
     func createSession() async {
-        guard let selectedServer else { return }
+        guard let selectedServer, canCreateSession else { return }
         let request = CreateSessionRequest(
-            repoPath: sessionConfiguration.repoPath,
-            agentCommand: sessionConfiguration.agentCommand,
-            agentArgs: sessionConfiguration.agentArgs
+            folderPath: sessionConfiguration.folderPath,
+            agent: sessionConfiguration.agent
         )
         await withClient(baseURL: selectedServer.baseURL) { [self] client in
             let session = try await client.createSession(request)
@@ -187,7 +205,7 @@ final class AppModel: ObservableObject {
     private func restoreTailnetIfPossible() async -> Bool {
         onboardingStatus = .authInProgress
         do {
-            return try await withTimeout(seconds: 4) { [self] in
+            return try await withTimeout(seconds: 8) { [self] in
                 try await self.tailnetProvider.restore()
             } ?? false
         } catch {
@@ -203,7 +221,8 @@ final class AppModel: ObservableObject {
         discoveredServers = servers
 
         guard !servers.isEmpty else {
-            onboardingStatus = .error("No All Hands server was discovered.")
+            inlineError = "No All Hands server was discovered."
+            onboardingStatus = .noServers
             return
         }
 
@@ -211,6 +230,24 @@ final class AppModel: ObservableObject {
             await selectServer(servers[0])
         } else {
             onboardingStatus = .serverSelection
+        }
+    }
+
+    private func loadServerInfo() async {
+        guard let selectedServer else { return }
+        await withClient(baseURL: selectedServer.baseURL) { [self] client in
+            let info = try await client.serverInfo()
+            self.serverInfo = info
+            if let existing = info.availableAgents.first(where: { $0.id == self.sessionConfiguration.agent }) {
+                self.sessionConfiguration.agent = existing.id
+            } else if let defaultAgent = info.defaultAgent {
+                self.sessionConfiguration.agent = defaultAgent
+            } else {
+                self.sessionConfiguration.agent = info.availableAgents.first?.id ?? ""
+            }
+            if self.sessionConfiguration.folderPath.isEmpty {
+                self.sessionConfiguration.folderPath = "."
+            }
         }
     }
 
@@ -225,9 +262,6 @@ final class AppModel: ObservableObject {
             inlineError = nil
         } catch {
             inlineError = error.localizedDescription
-            if case .connected = onboardingStatus {
-                onboardingStatus = .error(error.localizedDescription)
-            }
         }
     }
 

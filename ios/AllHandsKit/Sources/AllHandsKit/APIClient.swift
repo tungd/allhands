@@ -41,6 +41,13 @@ public struct APIClient: Sendable {
         return try decoder.decode(SessionListEnvelope.self, from: data).sessions
     }
 
+    public func serverInfo() async throws -> ServerInfo {
+        let request = URLRequest(url: baseURL.appending(path: "server-info"))
+        let (data, response) = try await session.data(for: request)
+        try validate(response: response)
+        return try decoder.decode(ServerInfo.self, from: data)
+    }
+
     public func createSession(_ createSessionRequest: CreateSessionRequest) async throws -> SessionSummary {
         var request = URLRequest(url: baseURL.appending(path: "sessions"))
         request.httpMethod = "POST"

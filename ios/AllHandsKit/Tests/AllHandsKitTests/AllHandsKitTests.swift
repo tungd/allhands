@@ -80,3 +80,35 @@ func discoveryPrefersBonjourAndReordersLastSelected() async {
     #expect(discovered.map(\.id) == ["backup", "allhands"])
     #expect(discovered[1].source == .bonjour)
 }
+
+@Test
+func serverInfoDecodes() throws {
+    let data = Data(
+        """
+        {
+          "launchRootPath": "/Users/tung/Projects/std23/allhands",
+          "defaultAgent": "codex",
+          "availableAgents": [
+            { "id": "codex", "displayName": "Codex" },
+            { "id": "claude", "displayName": "Claude Code" }
+          ]
+        }
+        """.utf8
+    )
+
+    let decoded = try JSONDecoder().decode(ServerInfo.self, from: data)
+    #expect(decoded.launchRootPath == "/Users/tung/Projects/std23/allhands")
+    #expect(decoded.defaultAgent == "codex")
+    #expect(decoded.availableAgents.map(\.id) == ["codex", "claude"])
+}
+
+@Test
+func createSessionRequestEncodesStructuredLaunchFields() throws {
+    let request = CreateSessionRequest(folderPath: "apps/api", agent: "codex")
+    let encoded = try JSONEncoder().encode(request)
+    let json = try JSONSerialization.jsonObject(with: encoded) as? [String: String]
+
+    #expect(json?["folderPath"] == "apps/api")
+    #expect(json?["agent"] == "codex")
+    #expect(json?["repoPath"] == nil)
+}
