@@ -13,6 +13,17 @@ let assert_string_equal label expected actual =
   if expected <> actual then
     failwith (Printf.sprintf "%s: expected %s but got %s" label expected actual)
 
+let string_contains haystack needle =
+  let haystack_length = String.length haystack in
+  let needle_length = String.length needle in
+  let rec loop index =
+    if needle_length = 0 then true
+    else if index + needle_length > haystack_length then false
+    else if String.sub haystack index needle_length = needle then true
+    else loop (index + 1)
+  in
+  loop 0
+
 let read_all_lines ic =
   let rec loop acc =
     match input_line ic with
@@ -179,7 +190,12 @@ let assert_client_ok label json =
   assert_int_equal (label ^ ": status") 200 (client_status json);
   let content_type = Option.value ~default:"" (client_header json "content-type") in
   assert_true (label ^ ": content-type should be text/event-stream")
-    (String.starts_with ~prefix:"text/event-stream" content_type)
+    (String.starts_with ~prefix:"text/event-stream" content_type);
+  let cache_control = Option.value ~default:"" (client_header json "cache-control") in
+  assert_true (label ^ ": cache-control should include no-cache")
+    (string_contains cache_control "no-cache");
+  assert_true (label ^ ": cache-control should include no-transform")
+    (string_contains cache_control "no-transform")
 
 let assert_event_sequences label ~start_seq ~count events =
   let actual = List.map event_seq events in

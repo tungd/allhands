@@ -13,6 +13,7 @@
  acp_transport
   bonjour_publisher
   http_server
+  web_ui_assets
   worktree_manager
   agent_process
   agent_rpc
@@ -20,6 +21,13 @@
   session_store
   event_mapper
   host_server))
+
+(rule
+ (deps
+  (source_tree web_ui/public))
+ (targets web_ui_assets.ml)
+ (action
+  (run ocaml-crunch -m plain -o %{targets} web_ui/public)))
 
 (rule
  (targets build_info.ml)

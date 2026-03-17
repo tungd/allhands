@@ -93,10 +93,14 @@ while time.time() < deadline:
             health = json.load(response)
         with urllib.request.urlopen(base_url + "/server-info", timeout=1.0) as response:
             info = json.load(response)
+        with urllib.request.urlopen(base_url + "/ui", timeout=1.0) as response:
+            ui_body = response.read().decode("utf-8")
         if health.get("status") != "ok":
             raise RuntimeError(f"unexpected health payload: {health}")
         if info.get("version") != version:
             raise RuntimeError(f"expected version {version!r} but got {info.get('version')!r}")
+        if "<!doctype html>" not in ui_body.lower():
+            raise RuntimeError("expected /ui to return an HTML shell")
         sys.exit(0)
     except Exception as exc:
         last_error = exc

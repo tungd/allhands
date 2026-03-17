@@ -29,6 +29,7 @@ server-test:
 	cd server && ./_build/default/test_launcher_catalog.exe
 	cd server && ./_build/default/test_host_server_api.exe
 	cd server && ./_build/default/test_integration.exe
+	cd server && node --test web_ui/*.test.js
 
 server-release-local: server-test
 	rm -rf "$(SERVER_RELEASE_DIR)"

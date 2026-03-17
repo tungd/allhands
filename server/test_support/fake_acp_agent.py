@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import json
+import os
 import sys
+import time
 
 
 def send(message):
@@ -58,6 +60,9 @@ for line in sys.stdin:
     elif method == "session/prompt":
         child_session = message["params"]["sessionId"]
         text = prompt_text(message["params"])
+        delay_s = float(os.environ.get("FAKE_ACP_PROMPT_DELAY_S", "0") or "0")
+        if delay_s > 0:
+            time.sleep(delay_s)
         send({
             "jsonrpc": "2.0",
             "method": "session/update",

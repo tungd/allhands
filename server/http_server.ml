@@ -57,8 +57,8 @@ type connection = {
 }
 
 type work_item = {
-  id : int;
-  run : unit -> async_response;
+  id : int option;
+  run : unit -> async_response option;
 }
 
 type work_result = {
@@ -112,13 +112,28 @@ let has_ci_header name headers =
   let lname = String.lowercase_ascii name in
   List.exists (fun (k, _v) -> String.equal (String.lowercase_ascii k) lname) headers
 
+let ensure_header (name, value) headers =
+  if has_ci_header name headers then headers
+  else (name, value) :: headers
+
 let with_default_headers headers body =
-  let headers =
-    if has_ci_header "server" headers then headers
-    else ("server", "OClaw/1.0") :: headers
-  in
-  if has_ci_header "content-length" headers then headers
-  else ("content-length", string_of_int (String.length body)) :: headers
+  headers
+  |> ensure_header ("server", "OClaw/1.0")
+  |> ensure_header ("content-length", string_of_int (String.length body))
+
+let request_header reqd name =
+  H1.Headers.get (Reqd.request reqd).headers name
+
+let request_etag_matches reqd etag =
+  match request_header reqd "if-none-match" with
+  | None -> false
+  | Some value ->
+      value
+      |> String.split_on_char ','
+      |> List.map String.trim
+      |> List.exists (fun candidate ->
+           candidate = "*"
+           || String.equal candidate etag)
 
 let signal_wakeup (server : t) =
   let wake_write =
@@ -163,6 +178,18 @@ let respond_json ?(status=`OK) ?(headers=[]) reqd data =
     else ("content-type", "application/json") :: headers
   in
   respond_text ~status ~headers reqd body
+
+let respond_static ?(headers=[]) reqd ~content_type ~cache_control ~etag body =
+  let headers =
+    headers
+    |> ensure_header ("content-type", content_type)
+    |> ensure_header ("cache-control", cache_control)
+    |> ensure_header ("etag", etag)
+  in
+  if request_etag_matches reqd etag then
+    respond_text ~status:`Not_modified ~headers reqd ""
+  else
+    respond_text ~headers reqd body
 
 let mark_stream_writable (stream : stream) =
   stream.conn.want_write <- true;
@@ -311,9 +338,23 @@ let submit_job server reqd (run : unit -> async_response) =
     let id = server.next_job_id in
     server.next_job_id <- server.next_job_id + 1;
     Hashtbl.replace server.pending_jobs id (reqd, Option.get conn);
-    Queue.add { id; run } pool.jobs;
+    Queue.add { id = Some id; run = (fun () -> Some (run ())) } pool.jobs;
     Condition.signal pool.job_cond;
     Mutex.unlock pool.job_mutex
+  end
+
+let submit_detached_job server (run : unit -> unit) =
+  let pool = server.worker_pool in
+  Mutex.lock pool.job_mutex;
+  let pending = Queue.length pool.jobs in
+  if not (Atomic.get pool.running) || pending >= pool.max_pending_jobs then begin
+    Mutex.unlock pool.job_mutex;
+    Error "Server busy"
+  end else begin
+    Queue.add { id = None; run = (fun () -> run (); None) } pool.jobs;
+    Condition.signal pool.job_cond;
+    Mutex.unlock pool.job_mutex;
+    Ok ()
   end
 
 let rec worker_loop server () =
@@ -333,14 +374,28 @@ let rec worker_loop server () =
   match next_item () with
   | None -> ()
   | Some item ->
-      let result =
-        try Ok (item.run ())
-        with exn -> Error exn
-      in
-      Mutex.lock pool.completion_mutex;
-      Queue.add { id = item.id; result } pool.completions;
-      Mutex.unlock pool.completion_mutex;
-      signal_wakeup server;
+      begin
+        match item.id with
+        | None ->
+            begin
+              try
+                ignore (item.run ())
+              with exn ->
+                Log.err (fun m -> m "Detached worker job failed: %s" (Printexc.to_string exn))
+            end
+        | Some id ->
+            let result =
+              try
+                match item.run () with
+                | Some response -> Ok response
+                | None -> Error (Failure "Async worker job completed without a response")
+              with exn -> Error exn
+            in
+            Mutex.lock pool.completion_mutex;
+            Queue.add { id; result } pool.completions;
+            Mutex.unlock pool.completion_mutex;
+            signal_wakeup server
+      end;
       worker_loop server ()
 
 let start_workers server =

@@ -35,6 +35,12 @@ type sse_sink = {
 let json_to_string json =
   Yojson.Safe.to_string json
 
+let api_headers = [("cache-control", "private, no-store")]
+let ui_html_cache_control = "no-cache, must-revalidate"
+let ui_asset_cache_control = "no-cache, must-revalidate"
+let immutable_asset_cache_control = "public, max-age=31536000, immutable"
+let mithril_asset_name = "mithril-2.3.8.min.js"
+
 let string_of_process_status = function
   | Unix.WEXITED code -> Printf.sprintf "exit:%d" code
   | Unix.WSIGNALED signal -> Printf.sprintf "signaled:%d" signal
@@ -44,27 +50,44 @@ let make_session_id () =
   Random.self_init ();
   Printf.sprintf "session_%08x%08x" (Random.bits ()) (Random.bits ())
 
-let json_response ?(status=`OK) json =
-  Async_response.json ~status json
+let async_json_response ?(status=`OK) json =
+  Async_response.json ~status ~headers:api_headers json
 
 let error_response ?(status=`Bad_request) message =
-  json_response ~status (Json_utils.error_json message)
+  async_json_response ~status (Json_utils.error_json message)
+
+let respond_api_json ?(status=`OK) reqd json =
+  Http_server.respond_json ~status ~headers:api_headers reqd json
+
+let respond_api_text ?(status=`OK) reqd text =
+  Http_server.respond_text ~status ~headers:api_headers reqd text
+
+let serve_ui_file reqd ~file_name ~content_type ~cache_control =
+  match Web_ui_assets.read file_name, Web_ui_assets.hash file_name with
+  | Some body, Some hash ->
+      Http_server.respond_static reqd
+        ~content_type
+        ~cache_control
+        ~etag:(Printf.sprintf "\"%s\"" hash)
+        body
+  | _ ->
+    Http_server.respond_text ~status:`Not_found reqd "Asset not found"
 
 let read_json_body reqd on_json =
   Http_server.read_body (Http_server.Reqd.request_body reqd) (function
     | Error (`Too_large max_bytes) ->
-        Http_server.respond_json ~status:`Payload_too_large reqd (`Assoc [
+        respond_api_json ~status:`Payload_too_large reqd (`Assoc [
           ("error", `String "Request body too large");
           ("maxBytes", `Int max_bytes);
         ])
     | Error (`Exception exn) ->
-        Http_server.respond_json ~status:`Bad_request reqd (`Assoc [
+        respond_api_json ~status:`Bad_request reqd (`Assoc [
           ("error", `String (Printexc.to_string exn));
         ])
     | Ok body ->
         try on_json (Yojson.Safe.from_string body)
         with Yojson.Json_error err ->
-          Http_server.respond_json ~status:`Bad_request reqd (`Assoc [
+          respond_api_json ~status:`Bad_request reqd (`Assoc [
             ("error", `String ("Invalid JSON: " ^ err));
           ]))
 
@@ -400,10 +423,10 @@ let session_json (session : Agent_session.t) =
 
 let list_sessions_handler (server : t) reqd =
   let sessions = Session_store.list_sessions server.sessions |> Models.json_list_of_summaries in
-  Http_server.respond_json reqd (`Assoc [("sessions", sessions)])
+  respond_api_json reqd (`Assoc [("sessions", sessions)])
 
 let health_handler reqd =
-  Http_server.respond_json reqd (`Assoc [
+  respond_api_json reqd (`Assoc [
     ("status", `String "ok");
     ("timestamp", `Float (Unix.gettimeofday ()));
   ])
@@ -423,7 +446,7 @@ let server_info_handler (server : t) reqd =
           server.config.available_launchers;
     }
   in
-  Http_server.respond_json reqd (Models.server_info_to_json server_info)
+  respond_api_json reqd (Models.server_info_to_json server_info)
 
 let create_session_handler (server : t) reqd =
   read_json_body reqd (fun json ->
@@ -431,14 +454,14 @@ let create_session_handler (server : t) reqd =
     match Models.parse_create_session_request json with
     | Error err ->
         Log.warn (fun m -> m "Invalid create session request: %s" err);
-        Http_server.respond_json ~status:`Bad_request reqd (Json_utils.error_json err)
+        respond_api_json ~status:`Bad_request reqd (Json_utils.error_json err)
     | Ok request ->
         begin
           match Launcher_catalog.resolve server.config.available_launchers request.agent with
           | None ->
               Log.warn (fun m ->
                 m "Create session requested unavailable agent=%s" request.agent);
-              Http_server.respond_json ~status:`Bad_request reqd
+              respond_api_json ~status:`Bad_request reqd
                 (Json_utils.error_json "Requested agent is not available on this server")
           | Some launcher ->
               begin
@@ -450,7 +473,7 @@ let create_session_handler (server : t) reqd =
                       m "Create session rejected folderPath=%s: %s"
                         request.folder_path
                         err);
-                    Http_server.respond_json ~status:`Bad_request reqd (Json_utils.error_json err)
+                    respond_api_json ~status:`Bad_request reqd (Json_utils.error_json err)
                 | Ok repo_path ->
                     Http_server.submit_job server.http_server reqd (fun () ->
                       Log.info (fun m ->
@@ -468,7 +491,7 @@ let create_session_handler (server : t) reqd =
                           error_response ~status:`Internal_server_error err
                       | Ok session ->
                           Log.info (fun m -> m "Create session succeeded id=%s" session.id);
-                          json_response (`Assoc [("session", session_json session)]))
+                          async_json_response (`Assoc [("session", session_json session)]))
               end
         end)
 
@@ -476,7 +499,7 @@ let handle_sse (server : t) session_id reqd =
   match find_session server session_id with
   | None ->
       Log.warn (fun m -> m "SSE requested for unknown session %s" session_id);
-      Http_server.respond_text ~status:`Not_found reqd "Session not found"
+      respond_api_text ~status:`Not_found reqd "Session not found"
   | Some _session ->
       Log.info (fun m -> m "Opening SSE stream for %s" session_id);
       let request = Http_server.Reqd.request reqd in
@@ -484,7 +507,7 @@ let handle_sse (server : t) session_id reqd =
       let stream =
         Http_server.respond_stream reqd ~headers:[
           ("content-type", "text/event-stream");
-          ("cache-control", "no-cache");
+          ("cache-control", "no-cache, no-transform");
           ("connection", "keep-alive");
         ]
       in
@@ -526,6 +549,36 @@ let handle_sse (server : t) session_id reqd =
             write_replay replay
       end
 
+let serve_ui_shell reqd =
+  serve_ui_file reqd
+    ~file_name:"index.html"
+    ~content_type:"text/html; charset=utf-8"
+    ~cache_control:ui_html_cache_control
+
+let serve_ui_asset reqd asset_name =
+  let asset_spec =
+    match asset_name with
+    | "app.js" | "api.js" | "event_utils.js" | "session_store.js" | "view.js" ->
+        Some ("text/javascript; charset=utf-8", ui_asset_cache_control)
+    | "app.css" ->
+        Some ("text/css; charset=utf-8", ui_asset_cache_control)
+    | asset when String.equal asset mithril_asset_name ->
+        Some ("text/javascript; charset=utf-8", immutable_asset_cache_control)
+    | _ -> None
+  in
+  match asset_spec with
+  | Some (content_type, cache_control) ->
+      serve_ui_file reqd ~file_name:asset_name ~content_type ~cache_control
+  | _ ->
+      Http_server.respond_text ~status:`Not_found reqd "Asset not found"
+
+let handle_ui_route path reqd =
+  match split_segments path with
+  | ["ui"] -> serve_ui_shell reqd
+  | ["ui"; "session"; _session_id] -> serve_ui_shell reqd
+  | ["ui"; "assets"; asset_name] -> serve_ui_asset reqd asset_name
+  | _ -> Http_server.respond_text ~status:`Not_found reqd "Not found"
+
 let handle_session_route (server : t) meth path reqd =
   match split_segments path with
   | ["sessions"] when meth = `GET -> list_sessions_handler server reqd
@@ -534,20 +587,20 @@ let handle_session_route (server : t) meth path reqd =
         match find_session server session_id with
         | None ->
             Log.warn (fun m -> m "GET unknown session %s" session_id);
-            Http_server.respond_json ~status:`Not_found reqd (Json_utils.error_json "Unknown session")
-        | Some session -> Http_server.respond_json reqd (`Assoc [("session", session_json session)])
+            respond_api_json ~status:`Not_found reqd (Json_utils.error_json "Unknown session")
+        | Some session -> respond_api_json reqd (`Assoc [("session", session_json session)])
       end
   | ["sessions"; session_id] when meth = `DELETE ->
       begin
         match find_session server session_id with
         | None ->
             Log.warn (fun m -> m "DELETE unknown session %s" session_id);
-            Http_server.respond_json ~status:`Not_found reqd (Json_utils.error_json "Unknown session")
+            respond_api_json ~status:`Not_found reqd (Json_utils.error_json "Unknown session")
         | Some session ->
             Log.info (fun m -> m "Deleting session %s" session_id);
             cleanup_session session;
             Session_store.remove_session server.sessions session_id;
-            Http_server.respond_json reqd (`Assoc [("deleted", `Bool true)])
+            respond_api_json reqd (`Assoc [("deleted", `Bool true)])
       end
   | ["sessions"; session_id; "events"] when meth = `GET -> handle_sse server session_id reqd
   | ["sessions"; session_id; "prompts"] when meth = `POST ->
@@ -555,31 +608,36 @@ let handle_session_route (server : t) meth path reqd =
         match find_session server session_id with
         | None ->
             Log.warn (fun m -> m "POST /prompts unknown session %s" session_id);
-            Http_server.respond_json ~status:`Not_found reqd (Json_utils.error_json "Unknown session")
+            respond_api_json ~status:`Not_found reqd (Json_utils.error_json "Unknown session")
         | Some session ->
             read_json_body reqd (fun json ->
               match Models.parse_prompt_request json with
               | Error err ->
                   Log.warn (fun m -> m "Invalid prompt request for %s: %s" session_id err);
-                  Http_server.respond_json ~status:`Bad_request reqd (Json_utils.error_json err)
+                  respond_api_json ~status:`Bad_request reqd (Json_utils.error_json err)
               | Ok prompt ->
-                  Http_server.submit_job server.http_server reqd (fun () ->
-                    match prompt_session server session prompt with
-                    | Error err -> error_response ~status:`Internal_server_error err
-                    | Ok result -> json_response (`Assoc [("result", result)])))
+                  begin
+                    match Http_server.submit_detached_job server.http_server (fun () ->
+                      ignore (prompt_session server session prompt)
+                    ) with
+                    | Error err ->
+                        respond_api_json ~status:`Service_unavailable reqd (Json_utils.error_json err)
+                    | Ok () ->
+                        respond_api_json reqd (`Assoc [("accepted", `Bool true)])
+                  end)
       end
   | ["sessions"; session_id; "tool-decisions"] when meth = `POST ->
       begin
         match find_session server session_id with
         | None ->
             Log.warn (fun m -> m "POST /tool-decisions unknown session %s" session_id);
-            Http_server.respond_json ~status:`Not_found reqd (Json_utils.error_json "Unknown session")
+            respond_api_json ~status:`Not_found reqd (Json_utils.error_json "Unknown session")
         | Some session ->
             read_json_body reqd (fun json ->
               match Models.parse_tool_decision_request json with
               | Error err ->
                   Log.warn (fun m -> m "Invalid tool decision request for %s: %s" session_id err);
-                  Http_server.respond_json ~status:`Bad_request reqd (Json_utils.error_json err)
+                  respond_api_json ~status:`Bad_request reqd (Json_utils.error_json err)
               | Ok request ->
                   begin
                     ignore (Session_store.append_event server.sessions session_id ~type_:"acp.call"
@@ -589,8 +647,8 @@ let handle_session_route (server : t) meth path reqd =
                         ("note", match request.note with Some note -> `String note | None -> `Null);
                       ]));
                     match tool_decision session request with
-                    | Ok () -> Http_server.respond_json reqd (`Assoc [("accepted", `Bool true)])
-                    | Error err -> Http_server.respond_json ~status:`Internal_server_error reqd (Json_utils.error_json err)
+                    | Ok () -> respond_api_json reqd (`Assoc [("accepted", `Bool true)])
+                    | Error err -> respond_api_json ~status:`Internal_server_error reqd (Json_utils.error_json err)
                   end)
       end
   | ["sessions"; session_id; "cancel"] when meth = `POST ->
@@ -598,14 +656,14 @@ let handle_session_route (server : t) meth path reqd =
         match find_session server session_id with
         | None ->
             Log.warn (fun m -> m "POST /cancel unknown session %s" session_id);
-            Http_server.respond_json ~status:`Not_found reqd (Json_utils.error_json "Unknown session")
+            respond_api_json ~status:`Not_found reqd (Json_utils.error_json "Unknown session")
         | Some session ->
             Http_server.submit_job server.http_server reqd (fun () ->
               match cancel_session server session with
               | Error err -> error_response ~status:`Internal_server_error err
-              | Ok result -> json_response (`Assoc [("result", result)]))
+              | Ok result -> async_json_response (`Assoc [("result", result)]))
       end
-  | _ -> Http_server.respond_text ~status:`Not_found reqd "Not found"
+  | _ -> respond_api_text ~status:`Not_found reqd "Not found"
 
 let create config =
   let http_server = Http_server.create ~host:config.host ~port:config.port ~idle_timeout_s:300.0 () in
@@ -620,6 +678,13 @@ let create config =
       let request = Http_server.Reqd.request reqd in
       let path, _query = Http_server.split_path_query request.target in
       handle_session_route server request.meth path reqd);
+  Http_server.add_route http_server ~method_:(Some `GET) "/ui"
+    (fun reqd -> handle_ui_route "/ui" reqd);
+  Http_server.add_route http_server ~method_:(Some `GET) ~match_type:Http_server.Prefix "/ui/"
+    (fun reqd ->
+      let request = Http_server.Reqd.request reqd in
+      let path, _query = Http_server.split_path_query request.target in
+      handle_ui_route path reqd);
   Http_server.add_route http_server ~method_:(Some `GET) "/healthz" health_handler;
   Http_server.add_route http_server ~method_:(Some `GET) "/server-info" (server_info_handler server);
   Http_server.add_route http_server ~method_:(Some `POST) "/sessions" (create_session_handler server);
