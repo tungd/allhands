@@ -177,6 +177,8 @@ let with_server ~launch_root_path ~available_launchers f =
     bonjour_enabled = false;
     launch_root_path;
     available_launchers;
+    acp_request_timeout_s = 300.0;
+    acp_prompt_timeout_s = 300.0;
   } in
   Host_server.start server;
   wait_until "HTTP server startup" (fun () -> Http_server.is_running server.Host_server.http_server);

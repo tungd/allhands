@@ -10,7 +10,8 @@ let synchronized_reporter reporter =
   in
   { Logs.report = report }
 
-let run ~host ~port ~service_name ~service_hostname ~bonjour_enabled ~debug =
+let run ~host ~port ~service_name ~service_hostname ~bonjour_enabled ~debug
+    ~acp_request_timeout_s ~acp_prompt_timeout_s =
   Printexc.record_backtrace true;
   Sys.set_signal Sys.sigpipe Sys.Signal_ignore;
   Logs.set_reporter (synchronized_reporter (Logs_fmt.reporter ()));
@@ -25,11 +26,17 @@ let run ~host ~port ~service_name ~service_hostname ~bonjour_enabled ~debug =
     bonjour_enabled;
     launch_root_path;
     available_launchers;
+    acp_request_timeout_s;
+    acp_prompt_timeout_s;
   } in
   Host_server.start server;
   Log.info (fun m -> m "All Hands server version %s" Build_info.version);
   Log.info (fun m -> m "All Hands server listening on http://%s:%d" host port);
   Log.info (fun m -> m "Launch root: %s" launch_root_path);
+  Log.info (fun m ->
+    m "ACP timeouts: request=%.1fs prompt=%.1fs"
+      acp_request_timeout_s
+      acp_prompt_timeout_s);
   Log.info (fun m -> m "Available ACP launchers: %s"
     (match available_launchers with
      | [] -> "none"
@@ -67,6 +74,8 @@ let () =
   let service_hostname = ref default_hostname in
   let bonjour_enabled = ref true in
   let debug = ref false in
+  let acp_request_timeout_s = ref 300.0 in
+  let acp_prompt_timeout_s = ref 300.0 in
   let specs = [
     ("--host", Arg.Set_string host, "Host to bind");
     ("--port", Arg.Set_int port, "Port to bind");
@@ -74,6 +83,10 @@ let () =
     ("--service-hostname", Arg.Set_string service_hostname, "Bonjour advertised hostname");
     ("--no-bonjour", Arg.Clear bonjour_enabled, "Disable Bonjour service advertisement");
     ("--debug", Arg.Set debug, "Enable verbose debug logging");
+    ("--acp-timeout", Arg.Set_float acp_request_timeout_s,
+      "ACP request timeout in seconds for initialize/session-new/cancel (default: 300)");
+    ("--acp-prompt-timeout", Arg.Set_float acp_prompt_timeout_s,
+      "ACP prompt timeout in seconds for session/prompt (default: 300)");
   ] in
   Arg.parse specs (fun _ -> ()) "allhands_server";
   run
@@ -83,3 +96,5 @@ let () =
     ~service_hostname:!service_hostname
     ~bonjour_enabled:!bonjour_enabled
     ~debug:!debug
+    ~acp_request_timeout_s:!acp_request_timeout_s
+    ~acp_prompt_timeout_s:!acp_prompt_timeout_s

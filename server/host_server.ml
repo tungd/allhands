@@ -11,6 +11,8 @@ type config = {
   bonjour_enabled : bool;
   launch_root_path : string;
   available_launchers : Launcher_catalog.launcher list;
+  acp_request_timeout_s : float;
+  acp_prompt_timeout_s : float;
 }
 
 type t = {
@@ -271,6 +273,7 @@ let initialize_agent server (session : Agent_session.t) =
       begin
         Log.info (fun m -> m "Sending initialize to agent for %s" session.id);
         match Agent_rpc.send_request rpc ~method_:"initialize"
+                ~timeout_s:server.config.acp_request_timeout_s
                 ~params:(`Assoc [("protocolVersion", `Int 1)]) with
         | Error err ->
             Log.err (fun m -> m "Initialize failed for %s: %s" session.id err);
@@ -292,7 +295,9 @@ let initialize_agent server (session : Agent_session.t) =
                 m "Sending session/new for %s: %s"
                   session.id
                   (json_to_string params));
-              match Agent_rpc.send_request rpc ~method_:"session/new" ~params with
+              match Agent_rpc.send_request rpc ~method_:"session/new"
+                      ~timeout_s:server.config.acp_request_timeout_s
+                      ~params with
               | Error err ->
                   Log.err (fun m -> m "session/new failed for %s: %s" session.id err);
                   Error err
@@ -369,7 +374,9 @@ let prompt_session (server : t) (session : Agent_session.t) (prompt : Models.pro
         ]
       in
       begin
-        match Agent_rpc.send_request rpc ~method_:"session/prompt" ~params ~timeout_s:120.0 with
+        match Agent_rpc.send_request rpc ~method_:"session/prompt"
+                ~params
+                ~timeout_s:server.config.acp_prompt_timeout_s with
         | Error err ->
             Log.err (fun m -> m "Prompt failed for %s: %s" session.id err);
             Session_store.update_status server.sessions session.id "error";
@@ -390,11 +397,12 @@ let prompt_session (server : t) (session : Agent_session.t) (prompt : Models.pro
       Log.warn (fun m -> m "Prompt rejected for %s because session is not ready" session.id);
       Error "Session is not ready"
 
-let cancel_session _server (session : Agent_session.t) =
+let cancel_session server (session : Agent_session.t) =
   Log.info (fun m -> m "Cancel request for %s" session.id);
   match session.Agent_session.rpc, session.child_session_id with
   | Some rpc, Some child_session_id ->
       Agent_rpc.send_request rpc ~method_:"session/cancel"
+        ~timeout_s:server.config.acp_request_timeout_s
         ~params:(`Assoc [("sessionId", `String child_session_id)])
   | _ ->
       Log.warn (fun m -> m "Cancel rejected for %s because session is not ready" session.id);

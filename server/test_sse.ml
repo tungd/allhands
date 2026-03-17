@@ -144,6 +144,8 @@ let with_server_session name f =
     bonjour_enabled = false;
     launch_root_path = Sys.getcwd ();
     available_launchers = [];
+    acp_request_timeout_s = 300.0;
+    acp_prompt_timeout_s = 300.0;
   } in
   let session = make_session ("session_" ^ name) in
   Host_server.start server;

@@ -73,7 +73,7 @@ let await_response pending ~timeout_s =
   in
   loop ()
 
-let send_request ?(timeout_s=30.0) t ~method_ ~params =
+let send_request ?(timeout_s=300.0) t ~method_ ~params =
   let id = Agent_process.next_request_id t.process in
   let pending = {
     mutex = Mutex.create ();

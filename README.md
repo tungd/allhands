@@ -71,6 +71,20 @@ worktree, and emits semantic SSE events for the mobile client.
 `GET /server-info` also reports the server `version`, which defaults to `dev`
 for local builds and is stamped from the git tag in release builds.
 
+ACP RPC timeouts are configurable at server startup:
+
+```bash
+cd server
+dune exec ./allhands_server.exe -- \
+  --host 0.0.0.0 \
+  --port 21991 \
+  --acp-timeout 60 \
+  --acp-prompt-timeout 300
+```
+
+The defaults are `300s` for `initialize`, `session/new`, `session/cancel`,
+and `session/prompt`.
+
 ## iOS
 
 The app project is generated from `ios/project.yml`:
