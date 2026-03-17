@@ -36,11 +36,24 @@ public struct TailnetConfiguration: Sendable, Equatable {
     }
 }
 
+public struct TailnetPeer: Equatable, Sendable {
+    public var id: String
+    public var name: String
+    public var hostnames: [String]
+
+    public init(id: String, name: String, hostnames: [String]) {
+        self.id = id
+        self.name = name
+        self.hostnames = hostnames
+    }
+}
+
 public protocol SessionProviding: Sendable {
     func restore() async throws -> Bool
     func prepareAuthenticationURL() async throws -> URL?
     func completeAuthentication() async throws
     func makeURLSession() async throws -> URLSession
+    func discoverPeers() async throws -> [TailnetPeer]
 }
 
 public struct DirectSessionProvider: SessionProviding {
@@ -60,6 +73,9 @@ public struct DirectSessionProvider: SessionProviding {
         URLSession(configuration: .default)
     }
 
+    public func discoverPeers() async throws -> [TailnetPeer] {
+        []
+    }
 }
 
 #if canImport(TailscaleKit)
@@ -153,6 +169,42 @@ public actor TailscaleSessionProvider: SessionProviding {
         return session
     }
 
+    public func discoverPeers() async throws -> [TailnetPeer] {
+        let status = try await backendStatusDetails()
+        guard status.BackendState == "Running" else {
+            return []
+        }
+
+        let magicDNSSuffix = normalizedHostName(status.CurrentTailnet?.MagicDNSSuffix)
+        let peers: [IpnState.PeerStatus] = status.Peer.map { Array($0.values) } ?? []
+
+        return peers.compactMap { peer -> TailnetPeer? in
+            let hostName = normalizedHostName(peer.HostName)
+            let dnsName = normalizedHostName(peer.DNSName)
+            var hostnames: [String] = []
+
+            if let dnsName {
+                hostnames.append(dnsName)
+            }
+
+            if let hostName, let magicDNSSuffix {
+                hostnames.append("\(hostName).\(magicDNSSuffix)")
+            }
+
+            hostnames = uniqueHostnames(hostnames)
+            hostnames.removeAll(where: shouldIgnoreHostName)
+            guard !hostnames.isEmpty else {
+                return nil
+            }
+
+            return TailnetPeer(
+                id: dnsName ?? hostnames[0],
+                name: hostName ?? dnsName ?? hostnames[0],
+                hostnames: hostnames
+            )
+        }
+    }
+
     private func prepareNode() async throws -> TailscaleNode {
         try ensureDataPath()
         if node == nil {
@@ -194,8 +246,12 @@ public actor TailscaleSessionProvider: SessionProviding {
     }
 
     private func backendState() async throws -> String {
+        try await backendStatusDetails().BackendState
+    }
+
+    private func backendStatusDetails() async throws -> IpnState.Status {
         let client = try await prepareLocalAPIClient()
-        return try await client.backendStatus().BackendState
+        return try await client.backendStatus()
     }
 
     private func awaitInteractiveLoginURL(using client: LocalAPIClient) async throws -> URL {
@@ -233,6 +289,28 @@ public actor TailscaleSessionProvider: SessionProviding {
             return url
         }
     }
+
+    private func normalizedHostName(_ rawValue: String?) -> String? {
+        guard let rawValue else { return nil }
+        let trimmed = rawValue
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return trimmed
+    }
+
+    private func uniqueHostnames(_ values: [String]) -> [String] {
+        var seen: Set<String> = []
+        return values.filter { value in
+            let normalized = value.lowercased()
+            return seen.insert(normalized).inserted
+        }
+    }
+
+    private func shouldIgnoreHostName(_ value: String) -> Bool {
+        let normalized = value.lowercased()
+        return normalized == "localhost" || !normalized.contains(".")
+    }
 }
 #else
 public struct TailscaleSessionProvider: SessionProviding {
@@ -256,5 +334,8 @@ public struct TailscaleSessionProvider: SessionProviding {
         throw TailnetTransportError.sdkUnavailable
     }
 
+    public func discoverPeers() async throws -> [TailnetPeer] {
+        []
+    }
 }
 #endif

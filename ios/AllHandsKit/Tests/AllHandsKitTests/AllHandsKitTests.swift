@@ -82,6 +82,49 @@ func discoveryPrefersBonjourAndReordersLastSelected() async {
 }
 
 @Test
+func discoveryMergesTailnetResultsAndPrefersBonjourForSameHost() async {
+    let service = ServerDiscoveryService(
+        bonjourLookup: {
+            [
+                DiscoveredServer(
+                    id: "tungs-mbp.local",
+                    name: "tungs-mbp",
+                    baseURL: URL(string: "http://tungs-mbp.local:8080")!,
+                    hostname: "tungs-mbp.local",
+                    port: 8080,
+                    source: .bonjour
+                )
+            ]
+        },
+        tailnetLookup: {
+            [
+                DiscoveredServer(
+                    id: "tungs-mbp.tail-scale.ts.net",
+                    name: "tungs-mbp",
+                    baseURL: URL(string: "http://tungs-mbp.tail-scale.ts.net:8080")!,
+                    hostname: "tungs-mbp.local",
+                    port: 8080,
+                    source: .tailnet
+                ),
+                DiscoveredServer(
+                    id: "buildbox.tail-scale.ts.net",
+                    name: "buildbox",
+                    baseURL: URL(string: "http://buildbox.tail-scale.ts.net:8080")!,
+                    hostname: "buildbox.tail-scale.ts.net",
+                    port: 8080,
+                    source: .tailnet
+                )
+            ]
+        }
+    )
+
+    let discovered = await service.discover(lastSelectedServerID: nil)
+    #expect(discovered.count == 2)
+    #expect(discovered.map(\.name) == ["buildbox", "tungs-mbp"])
+    #expect(discovered.last?.source == .bonjour)
+}
+
+@Test
 func serverInfoDecodes() throws {
     let data = Data(
         """

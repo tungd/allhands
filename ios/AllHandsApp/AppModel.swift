@@ -44,7 +44,11 @@ final class AppModel: ObservableObject {
             )
         )
         self.tailnetProvider = provider
-        self.discoveryService = discoveryService ?? ServerDiscoveryService()
+        self.discoveryService = discoveryService ?? ServerDiscoveryService(
+            tailnetLookup: {
+                await TailnetServerDiscovery.discover(using: provider)
+            }
+        )
     }
 
     var selectedSession: SessionSummary? {

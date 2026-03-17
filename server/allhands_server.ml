@@ -35,9 +35,14 @@ let run ~host ~port ~service_name ~service_hostname ~bonjour_enabled =
 
 let () =
   let default_hostname = Unix.gethostname () in
+  let default_service_name =
+    match String.split_on_char '.' default_hostname with
+    | "" :: _ | [] -> default_hostname
+    | head :: _ -> head
+  in
   let host = ref "0.0.0.0" in
   let port = ref 8080 in
-  let service_name = ref default_hostname in
+  let service_name = ref default_service_name in
   let service_hostname = ref default_hostname in
   let bonjour_enabled = ref true in
   let specs = [

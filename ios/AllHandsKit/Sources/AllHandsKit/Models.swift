@@ -94,6 +94,7 @@ public struct SessionSummary: Codable, Equatable, Identifiable, Sendable {
 
 public enum DiscoverySource: String, Codable, Equatable, Sendable {
     case bonjour
+    case tailnet
 }
 
 public struct DiscoveredServer: Codable, Equatable, Identifiable, Sendable {

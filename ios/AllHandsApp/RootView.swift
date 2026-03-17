@@ -42,7 +42,7 @@ struct RootView: View {
         VStack(alignment: .leading, spacing: 18) {
             Text("All Hands")
                 .font(.title)
-            Text("Tailscale is the default transport. Sign in, discover your server, and attach automatically.")
+            Text("Tailscale is the default transport. The app discovers over Bonjour on the local network and falls back to Tailnet peer probing.")
                 .foregroundStyle(.secondary)
             Text(statusTitle)
                 .font(.headline)
@@ -276,7 +276,7 @@ struct RootView: View {
         case .authInProgress:
             return "The app opened the Tailscale sign-in flow in your browser. Return here when it completes."
         case .discovering:
-            return "Browsing the local network for Bonjour-advertised All Hands servers."
+            return "Browsing Bonjour on the local network, then probing Tailnet peers for All Hands."
         case .noServers:
             return "Discovery completed, but no All Hands server responded."
         case .serverSelection:
@@ -318,7 +318,7 @@ struct RootView: View {
         case .authInProgress:
             return "Browser auth flow in progress"
         case .discovering:
-            return "Bonjour discovery"
+            return "Bonjour and Tailnet discovery"
         case .noServers:
             return "No discovered hosts"
         case .serverSelection:
