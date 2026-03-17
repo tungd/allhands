@@ -25,7 +25,7 @@ test:
 	cd ios && swift test --package-path AllHandsKit
 
 run-server:
-	cd server && dune exec ./allhands_server.exe -- --host 0.0.0.0 --port 8080
+	cd server && dune exec ./allhands_server.exe -- --host 0.0.0.0 --port 21991
 
 open-ios:
 	cd ios && xcodegen generate

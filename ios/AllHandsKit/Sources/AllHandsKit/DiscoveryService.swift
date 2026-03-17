@@ -286,7 +286,7 @@ public actor ServerDiscoveryService: ServerDiscovering {
 public enum TailnetServerDiscovery {
     public static func discover(
         using sessionProvider: SessionProviding,
-        port: Int = 8080,
+        port: Int = 21991,
         timeout: TimeInterval = 1.5
     ) async -> [DiscoveredServer] {
         guard let session = try? await sessionProvider.makeURLSession() else {

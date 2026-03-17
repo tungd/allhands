@@ -59,17 +59,17 @@ func discoveryPrefersBonjourAndReordersLastSelected() async {
                 DiscoveredServer(
                     id: "allhands",
                     name: "All Hands",
-                    baseURL: URL(string: "http://allhands.local:8080")!,
+                    baseURL: URL(string: "http://allhands.local:21991")!,
                     hostname: "allhands",
-                    port: 8080,
+                    port: 21991,
                     source: .bonjour
                 ),
                 DiscoveredServer(
                     id: "backup",
                     name: "backup",
-                    baseURL: URL(string: "http://backup.local:8080")!,
+                    baseURL: URL(string: "http://backup.local:21991")!,
                     hostname: "backup",
-                    port: 8080,
+                    port: 21991,
                     source: .bonjour
                 )
             ]
@@ -89,9 +89,9 @@ func discoveryMergesTailnetResultsAndPrefersBonjourForSameHost() async {
                 DiscoveredServer(
                     id: "tungs-mbp.local",
                     name: "tungs-mbp",
-                    baseURL: URL(string: "http://tungs-mbp.local:8080")!,
+                    baseURL: URL(string: "http://tungs-mbp.local:21991")!,
                     hostname: "tungs-mbp.local",
-                    port: 8080,
+                    port: 21991,
                     source: .bonjour
                 )
             ]
@@ -101,17 +101,17 @@ func discoveryMergesTailnetResultsAndPrefersBonjourForSameHost() async {
                 DiscoveredServer(
                     id: "tungs-mbp.tail-scale.ts.net",
                     name: "tungs-mbp",
-                    baseURL: URL(string: "http://tungs-mbp.tail-scale.ts.net:8080")!,
+                    baseURL: URL(string: "http://tungs-mbp.tail-scale.ts.net:21991")!,
                     hostname: "tungs-mbp.local",
-                    port: 8080,
+                    port: 21991,
                     source: .tailnet
                 ),
                 DiscoveredServer(
                     id: "buildbox.tail-scale.ts.net",
                     name: "buildbox",
-                    baseURL: URL(string: "http://buildbox.tail-scale.ts.net:8080")!,
+                    baseURL: URL(string: "http://buildbox.tail-scale.ts.net:21991")!,
                     hostname: "buildbox.tail-scale.ts.net",
-                    port: 8080,
+                    port: 21991,
                     source: .tailnet
                 )
             ]

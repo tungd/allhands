@@ -41,7 +41,7 @@ let () =
     | head :: _ -> head
   in
   let host = ref "0.0.0.0" in
-  let port = ref 8080 in
+  let port = ref 21991 in
   let service_name = ref default_service_name in
   let service_hostname = ref default_hostname in
   let bonjour_enabled = ref true in
