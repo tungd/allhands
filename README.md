@@ -81,5 +81,4 @@ make tailscalekit
 
 The non-UI code lives in `ios/AllHandsKit`, which also has the package tests.
 The app now defaults to Tailscale onboarding, then discovers servers via
-Bonjour on LAN and a stable MagicDNS hostname fallback (`allhands:8080`) on the
-tailnet.
+Bonjour on the local network.

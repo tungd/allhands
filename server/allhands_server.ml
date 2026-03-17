@@ -12,7 +12,7 @@ let run ~host ~port ~service_name ~service_hostname ~bonjour_enabled =
   } in
   Host_server.start server;
   Log.info (fun m -> m "All Hands server listening on http://%s:%d" host port);
-  Log.info (fun m -> m "MagicDNS hostname contract: http://%s:%d" service_hostname port);
+  Log.info (fun m -> m "Bonjour advertised hostname: http://%s:%d" service_hostname port);
   let rec loop () =
     Unix.sleepf 3600.0;
     loop ()
@@ -32,7 +32,7 @@ let () =
     ("--host", Arg.Set_string host, "Host to bind");
     ("--port", Arg.Set_int port, "Port to bind");
     ("--service-name", Arg.Set_string service_name, "Bonjour service instance name");
-    ("--service-hostname", Arg.Set_string service_hostname, "Stable MagicDNS hostname contract");
+    ("--service-hostname", Arg.Set_string service_hostname, "Bonjour advertised hostname");
     ("--no-bonjour", Arg.Clear bonjour_enabled, "Disable Bonjour service advertisement");
   ] in
   Arg.parse specs (fun _ -> ()) "allhands_server";

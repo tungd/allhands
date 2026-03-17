@@ -41,7 +41,6 @@ public protocol SessionProviding: Sendable {
     func prepareAuthenticationURL() async throws -> URL?
     func completeAuthentication() async throws
     func makeURLSession() async throws -> URLSession
-    func tailnetHostCandidates(defaults: [String]) async throws -> [String]
 }
 
 public struct DirectSessionProvider: SessionProviding {
@@ -61,9 +60,6 @@ public struct DirectSessionProvider: SessionProviding {
         URLSession(configuration: .default)
     }
 
-    public func tailnetHostCandidates(defaults: [String]) async throws -> [String] {
-        defaults
-    }
 }
 
 #if canImport(TailscaleKit)
@@ -155,29 +151,6 @@ public actor TailscaleSessionProvider: SessionProviding {
         let session = URLSession(configuration: sessionConfiguration)
         cachedSession = session
         return session
-    }
-
-    public func tailnetHostCandidates(defaults: [String]) async throws -> [String] {
-        let status = try await prepareLocalAPIClient().backendStatus()
-        var candidates: [String] = defaults
-
-        if let peers = status.Peer {
-            for peer in peers.values {
-                let dnsName = peer.DNSName.trimmingCharacters(in: CharacterSet(charactersIn: "."))
-                if !dnsName.isEmpty {
-                    candidates.append(dnsName)
-                    if let shortName = dnsName.split(separator: ".").first.map(String.init) {
-                        candidates.append(shortName)
-                    }
-                }
-
-                if !peer.HostName.isEmpty {
-                    candidates.append(peer.HostName)
-                }
-            }
-        }
-
-        return Array(NSOrderedSet(array: candidates)) as? [String] ?? defaults
     }
 
     private func prepareNode() async throws -> TailscaleNode {
@@ -283,8 +256,5 @@ public struct TailscaleSessionProvider: SessionProviding {
         throw TailnetTransportError.sdkUnavailable
     }
 
-    public func tailnetHostCandidates(defaults: [String]) async throws -> [String] {
-        defaults
-    }
 }
 #endif

@@ -53,9 +53,7 @@ func directProviderReturnsSession() async throws {
 
 @Test
 func discoveryPrefersBonjourAndReordersLastSelected() async {
-    let provider = DirectSessionProvider()
     let service = ServerDiscoveryService(
-        sessionProvider: provider,
         bonjourLookup: {
             [
                 DiscoveredServer(
@@ -65,26 +63,14 @@ func discoveryPrefersBonjourAndReordersLastSelected() async {
                     hostname: "allhands",
                     port: 8080,
                     source: .bonjour
-                )
-            ]
-        },
-        magicDNSLookup: {
-            [
-                DiscoveredServer(
-                    id: "allhands",
-                    name: "allhands",
-                    baseURL: URL(string: "http://allhands:8080")!,
-                    hostname: "allhands",
-                    port: 8080,
-                    source: .magicDNS
                 ),
                 DiscoveredServer(
                     id: "backup",
                     name: "backup",
-                    baseURL: URL(string: "http://backup:8080")!,
+                    baseURL: URL(string: "http://backup.local:8080")!,
                     hostname: "backup",
                     port: 8080,
-                    source: .magicDNS
+                    source: .bonjour
                 )
             ]
         }

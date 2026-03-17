@@ -291,7 +291,7 @@ struct RootView: View {
         case .authInProgress:
             return "The app opened the Tailscale sign-in flow in your browser. Return here when it completes."
         case .discovering:
-            return "Browsing Bonjour first, then checking the tailnet hostname fallback."
+            return "Browsing the local network for Bonjour-advertised All Hands servers."
         case .serverSelection:
             return "Multiple servers responded. Pick the one you want to attach to."
         case .connected:
@@ -329,7 +329,7 @@ struct RootView: View {
         case .authInProgress:
             return "Browser auth flow in progress"
         case .discovering:
-            return "Bonjour and MagicDNS discovery"
+            return "Bonjour discovery"
         case .serverSelection:
             return "Select from discovered hosts"
         case .connected:

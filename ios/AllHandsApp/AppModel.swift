@@ -44,7 +44,7 @@ final class AppModel: ObservableObject {
             )
         )
         self.tailnetProvider = provider
-        self.discoveryService = discoveryService ?? ServerDiscoveryService(sessionProvider: provider)
+        self.discoveryService = discoveryService ?? ServerDiscoveryService()
     }
 
     var selectedSession: SessionSummary? {

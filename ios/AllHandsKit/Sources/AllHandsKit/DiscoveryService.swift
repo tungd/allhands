@@ -41,8 +41,8 @@ private final class BonjourBrowserCoordinator: NSObject, NetServiceBrowserDelega
 
         let metadata = Self.decodeTXTRecord(sender.txtRecordData())
         let name = metadata["name"] ?? sender.name
-        let hostname = metadata["hostname"] ?? hostName
-        let identifier = metadata["hostname"] ?? hostname
+        let hostname = hostName
+        let identifier = metadata["hostname"] ?? hostName
         let baseURL = URL(string: "http://\(hostname):\(sender.port)")!
 
         lock.lock()
@@ -93,21 +93,15 @@ public struct DiscoveryConfiguration: Equatable, Sendable {
     public var bonjourServiceType: String
     public var bonjourDomain: String
     public var bonjourBrowseDurationNanoseconds: UInt64
-    public var magicDNSHostCandidates: [String]
-    public var defaultPort: Int
 
     public init(
         bonjourServiceType: String = "_allhands._tcp.",
         bonjourDomain: String = "local.",
-        bonjourBrowseDurationNanoseconds: UInt64 = 3_000_000_000,
-        magicDNSHostCandidates: [String] = ["allhands"],
-        defaultPort: Int = 8080
+        bonjourBrowseDurationNanoseconds: UInt64 = 3_000_000_000
     ) {
         self.bonjourServiceType = bonjourServiceType
         self.bonjourDomain = bonjourDomain
         self.bonjourBrowseDurationNanoseconds = bonjourBrowseDurationNanoseconds
-        self.magicDNSHostCandidates = magicDNSHostCandidates
-        self.defaultPort = defaultPort
     }
 }
 
@@ -117,26 +111,19 @@ public protocol ServerDiscovering: Sendable {
 
 public actor ServerDiscoveryService: ServerDiscovering {
     private let configuration: DiscoveryConfiguration
-    private let sessionProvider: SessionProviding
     private let bonjourLookup: (() async -> [DiscoveredServer])?
-    private let magicDNSLookup: (() async -> [DiscoveredServer])?
 
     public init(
         configuration: DiscoveryConfiguration = DiscoveryConfiguration(),
-        sessionProvider: SessionProviding,
-        bonjourLookup: (() async -> [DiscoveredServer])? = nil,
-        magicDNSLookup: (() async -> [DiscoveredServer])? = nil
+        bonjourLookup: (() async -> [DiscoveredServer])? = nil
     ) {
         self.configuration = configuration
-        self.sessionProvider = sessionProvider
         self.bonjourLookup = bonjourLookup
-        self.magicDNSLookup = magicDNSLookup
     }
 
     public func discover(lastSelectedServerID: String?) async -> [DiscoveredServer] {
         let bonjourServers = if let bonjourLookup { await bonjourLookup() } else { await browseBonjour() }
-        let magicDNSServers = if let magicDNSLookup { await magicDNSLookup() } else { await probeMagicDNS() }
-        let merged = dedupeServers(bonjourServers + magicDNSServers)
+        let merged = dedupeServers(bonjourServers)
         guard !merged.isEmpty else { return [] }
 
         if let lastSelectedServerID,
@@ -160,39 +147,6 @@ public actor ServerDiscoveryService: ServerDiscovering {
                 return lhs.hostname < rhs.hostname
             }
             return lhs.name < rhs.name
-        }
-    }
-
-    private func probeMagicDNS() async -> [DiscoveredServer] {
-        do {
-            let session = try await sessionProvider.makeURLSession()
-            let hostCandidates = try await sessionProvider.tailnetHostCandidates(defaults: configuration.magicDNSHostCandidates)
-            var discovered: [DiscoveredServer] = []
-            for hostname in hostCandidates {
-                guard let baseURL = URL(string: "http://\(hostname):\(configuration.defaultPort)") else {
-                    continue
-                }
-
-                do {
-                    let client = APIClient(baseURL: baseURL, session: session)
-                    try await client.health(timeout: 2.0)
-                    discovered.append(
-                        DiscoveredServer(
-                            id: hostname,
-                            name: hostname,
-                            baseURL: baseURL,
-                            hostname: hostname,
-                            port: configuration.defaultPort,
-                            source: .magicDNS
-                        )
-                    )
-                } catch {
-                    continue
-                }
-            }
-            return discovered
-        } catch {
-            return []
         }
     }
 
