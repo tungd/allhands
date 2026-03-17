@@ -32,6 +32,14 @@ type sse_sink = {
   mutable closed : bool;
 }
 
+let json_to_string json =
+  Yojson.Safe.to_string json
+
+let string_of_process_status = function
+  | Unix.WEXITED code -> Printf.sprintf "exit:%d" code
+  | Unix.WSIGNALED signal -> Printf.sprintf "signaled:%d" signal
+  | Unix.WSTOPPED signal -> Printf.sprintf "stopped:%d" signal
+
 let make_session_id () =
   Random.self_init ();
   Printf.sprintf "session_%08x%08x" (Random.bits ()) (Random.bits ())
@@ -169,6 +177,11 @@ let find_session (server : t) session_id =
   Session_store.find_session server.sessions session_id
 
 let cleanup_session (session : Agent_session.t) =
+  Log.info (fun m ->
+    m "Cleaning up session %s (repo=%s worktree=%s)"
+      session.id
+      session.repo_path
+      session.worktree_path);
   begin
     match session.Agent_session.rpc with
     | Some rpc -> Agent_rpc.terminate rpc
@@ -181,6 +194,11 @@ let cleanup_session (session : Agent_session.t) =
 let attach_rpc_callbacks (server : t) (session : Agent_session.t) =
   let on_message json =
     let event_type, payload = Event_mapper.from_agent_message json in
+    Log.debug (fun m ->
+      m "ACP message for %s mapped to %s: %s"
+        session.id
+        event_type
+        (json_to_string json));
     ignore (Session_store.append_event server.sessions session.Agent_session.id ~type_:event_type ~payload);
     begin
       match event_type with
@@ -190,18 +208,17 @@ let attach_rpc_callbacks (server : t) (session : Agent_session.t) =
     end
   in
   let on_stderr line =
+    Log.warn (fun m -> m "ACP stderr for %s: %s" session.id line);
     ignore (Session_store.append_event server.sessions session.id ~type_:"acp.status"
       ~payload:(`Assoc [("stream", `String "stderr"); ("line", `String line)]))
   in
   let on_exit status =
+    let status_text = string_of_process_status status in
+    Log.warn (fun m -> m "Agent process exited for %s: %s" session.id status_text);
     let payload =
       `Assoc [
         ("state", `String "stopped");
-        ("status", `String
-          (match status with
-           | Unix.WEXITED code -> Printf.sprintf "exit:%d" code
-           | Unix.WSIGNALED signal -> Printf.sprintf "signaled:%d" signal
-           | Unix.WSTOPPED signal -> Printf.sprintf "stopped:%d" signal));
+        ("status", `String status_text);
       ]
     in
     Session_store.update_status server.sessions session.id "stopped";
@@ -211,19 +228,35 @@ let attach_rpc_callbacks (server : t) (session : Agent_session.t) =
 
 let initialize_agent server (session : Agent_session.t) =
   let on_message, on_stderr, on_exit = attach_rpc_callbacks server session in
+  Log.info (fun m ->
+    m "Launching agent for %s with command=%s args=[%s] cwd=%s"
+      session.id
+      session.agent_command
+      (String.concat "; " session.agent_args)
+      session.worktree_path);
   match Agent_rpc.create
           ~command:session.agent_command
           ~args:session.agent_args
           ~on_message
           ~on_stderr
           ~on_exit with
-  | Error err -> Error err
+  | Error err ->
+      Log.err (fun m -> m "Failed to spawn agent for %s: %s" session.id err);
+      Error err
   | Ok rpc ->
       session.rpc <- Some rpc;
       begin
-        match Agent_rpc.send_request rpc ~method_:"initialize" ~params:(`Assoc []) with
-        | Error err -> Error err
+        Log.info (fun m -> m "Sending initialize to agent for %s" session.id);
+        match Agent_rpc.send_request rpc ~method_:"initialize"
+                ~params:(`Assoc [("protocolVersion", `Int 1)]) with
+        | Error err ->
+            Log.err (fun m -> m "Initialize failed for %s: %s" session.id err);
+            Error err
         | Ok result ->
+            Log.info (fun m ->
+              m "Initialize succeeded for %s: %s"
+                session.id
+                (json_to_string result));
             ignore (Session_store.append_event server.sessions session.id ~type_:"acp.init" ~payload:result);
             let params =
               `Assoc [
@@ -232,10 +265,21 @@ let initialize_agent server (session : Agent_session.t) =
               ]
             in
             begin
+              Log.info (fun m ->
+                m "Sending session/new for %s: %s"
+                  session.id
+                  (json_to_string params));
               match Agent_rpc.send_request rpc ~method_:"session/new" ~params with
-              | Error err -> Error err
+              | Error err ->
+                  Log.err (fun m -> m "session/new failed for %s: %s" session.id err);
+                  Error err
               | Ok result ->
                   let child_session_id = result |> member "sessionId" |> to_string in
+                  Log.info (fun m ->
+                    m "session/new succeeded for %s -> child session %s payload=%s"
+                      session.id
+                      child_session_id
+                      (json_to_string result));
                   session.child_session_id <- Some child_session_id;
                   session.status <- "ready";
                   Session_store.update_status server.sessions session.id "ready";
@@ -246,8 +290,18 @@ let initialize_agent server (session : Agent_session.t) =
       end
 
 let create_session_with_launcher (server : t) ~repo_path (launcher : Launcher_catalog.launcher) =
+  Log.info (fun m ->
+    m "Creating session with launcher=%s repo=%s"
+      launcher.Launcher_catalog.id
+      repo_path);
   match Worktree_manager.create_worktree ~repo_path ~session_id:(make_session_id ()) with
-  | Error err -> Error err
+  | Error err ->
+      Log.err (fun m ->
+        m "Failed to create worktree for repo=%s launcher=%s: %s"
+          repo_path
+          launcher.Launcher_catalog.id
+          err);
+      Error err
   | Ok worktree_path ->
       let id = Filename.basename worktree_path in
       let session =
@@ -258,17 +312,28 @@ let create_session_with_launcher (server : t) ~repo_path (launcher : Launcher_ca
           ~agent_command:launcher.command
           ~agent_args:launcher.args
       in
+      Log.info (fun m ->
+        m "Session %s created with worktree=%s"
+          session.id
+          session.worktree_path);
       Session_store.add_session server.sessions session;
       ignore (Session_store.append_event server.sessions session.id ~type_:"acp.status"
         ~payload:(`Assoc [("state", `String "starting")]));
       match initialize_agent server session with
-      | Ok () -> Ok session
+      | Ok () ->
+          Log.info (fun m -> m "Session %s is ready" session.id);
+          Ok session
       | Error err ->
+          Log.err (fun m -> m "Session %s failed during startup: %s" session.id err);
           cleanup_session session;
           Session_store.remove_session server.sessions session.id;
           Error err
 
 let prompt_session (server : t) (session : Agent_session.t) (prompt : Models.prompt_request) =
+  Log.info (fun m ->
+    m "Prompt request for %s: %S"
+      session.id
+      prompt.text);
   Session_store.update_status server.sessions session.id "busy";
   ignore (Session_store.append_event server.sessions session.id ~type_:"acp.status"
     ~payload:(`Assoc [("state", `String "busy")]));
@@ -283,26 +348,42 @@ let prompt_session (server : t) (session : Agent_session.t) (prompt : Models.pro
       begin
         match Agent_rpc.send_request rpc ~method_:"session/prompt" ~params ~timeout_s:120.0 with
         | Error err ->
+            Log.err (fun m -> m "Prompt failed for %s: %s" session.id err);
             Session_store.update_status server.sessions session.id "error";
             ignore (Session_store.append_event server.sessions session.id ~type_:"acp.error"
               ~payload:(`Assoc [("message", `String err)]));
             Error err
         | Ok result ->
+            Log.info (fun m ->
+              m "Prompt completed for %s: %s"
+                session.id
+                (json_to_string result));
             Session_store.update_status server.sessions session.id "ready";
             ignore (Session_store.append_event server.sessions session.id ~type_:"acp.status"
               ~payload:(`Assoc [("state", `String "ready"); ("stopReason", result |> member "stopReason")]));
             Ok result
       end
-  | _ -> Error "Session is not ready"
+  | _ ->
+      Log.warn (fun m -> m "Prompt rejected for %s because session is not ready" session.id);
+      Error "Session is not ready"
 
 let cancel_session _server (session : Agent_session.t) =
+  Log.info (fun m -> m "Cancel request for %s" session.id);
   match session.Agent_session.rpc, session.child_session_id with
   | Some rpc, Some child_session_id ->
       Agent_rpc.send_request rpc ~method_:"session/cancel"
         ~params:(`Assoc [("sessionId", `String child_session_id)])
-  | _ -> Error "Session is not ready"
+  | _ ->
+      Log.warn (fun m -> m "Cancel rejected for %s because session is not ready" session.id);
+      Error "Session is not ready"
 
 let tool_decision (session : Agent_session.t) (request : Models.tool_decision_request) =
+  Log.info (fun m ->
+    m "Tool decision for %s call=%s decision=%s note=%s"
+      session.id
+      request.call_id
+      request.decision
+      (Option.value ~default:"" request.note));
   match session.Agent_session.rpc, session.child_session_id with
   | Some rpc, Some child_session_id ->
       Agent_rpc.send_notification rpc ~method_:"session/toolDecision"
@@ -330,6 +411,7 @@ let health_handler reqd =
 let server_info_handler (server : t) reqd =
   let server_info =
     {
+      Models.version = Build_info.version;
       Models.launch_root_path = server.config.launch_root_path;
       default_agent = Launcher_catalog.default_agent_id server.config.available_launchers;
       available_agents =
@@ -345,12 +427,17 @@ let server_info_handler (server : t) reqd =
 
 let create_session_handler (server : t) reqd =
   read_json_body reqd (fun json ->
+    Log.info (fun m -> m "POST /sessions payload=%s" (json_to_string json));
     match Models.parse_create_session_request json with
-    | Error err -> Http_server.respond_json ~status:`Bad_request reqd (Json_utils.error_json err)
+    | Error err ->
+        Log.warn (fun m -> m "Invalid create session request: %s" err);
+        Http_server.respond_json ~status:`Bad_request reqd (Json_utils.error_json err)
     | Ok request ->
         begin
           match Launcher_catalog.resolve server.config.available_launchers request.agent with
           | None ->
+              Log.warn (fun m ->
+                m "Create session requested unavailable agent=%s" request.agent);
               Http_server.respond_json ~status:`Bad_request reqd
                 (Json_utils.error_json "Requested agent is not available on this server")
           | Some launcher ->
@@ -359,19 +446,39 @@ let create_session_handler (server : t) reqd =
                         ~launch_root_path:server.config.launch_root_path
                         ~folder_path:request.folder_path with
                 | Error err ->
+                    Log.warn (fun m ->
+                      m "Create session rejected folderPath=%s: %s"
+                        request.folder_path
+                        err);
                     Http_server.respond_json ~status:`Bad_request reqd (Json_utils.error_json err)
                 | Ok repo_path ->
                     Http_server.submit_job server.http_server reqd (fun () ->
+                      Log.info (fun m ->
+                        m "Create session request accepted agent=%s folderPath=%s resolvedRepo=%s"
+                          request.agent
+                          request.folder_path
+                          repo_path);
                       match create_session_with_launcher server ~repo_path launcher with
-                      | Error err -> error_response ~status:`Internal_server_error err
-                      | Ok session -> json_response (`Assoc [("session", session_json session)]))
+                      | Error err ->
+                          Log.err (fun m ->
+                            m "Create session failed for repo=%s agent=%s: %s"
+                              repo_path
+                              request.agent
+                              err);
+                          error_response ~status:`Internal_server_error err
+                      | Ok session ->
+                          Log.info (fun m -> m "Create session succeeded id=%s" session.id);
+                          json_response (`Assoc [("session", session_json session)]))
               end
         end)
 
 let handle_sse (server : t) session_id reqd =
   match find_session server session_id with
-  | None -> Http_server.respond_text ~status:`Not_found reqd "Session not found"
+  | None ->
+      Log.warn (fun m -> m "SSE requested for unknown session %s" session_id);
+      Http_server.respond_text ~status:`Not_found reqd "Session not found"
   | Some _session ->
+      Log.info (fun m -> m "Opening SSE stream for %s" session_id);
       let request = Http_server.Reqd.request reqd in
       let last_event_id = request_header request "last-event-id" in
       let stream =
@@ -399,8 +506,14 @@ let handle_sse (server : t) session_id reqd =
         match Session_store.subscribe_with_replay server.sessions session_id last_event_id callback with
         | Error err ->
             cleanup_sse_sink sink;
+            Log.warn (fun m -> m "Failed SSE subscribe for %s: %s" session_id err);
             Log.warn (fun m -> m "Failed to subscribe SSE client: %s" err)
         | Ok (subscriber_id, replay) ->
+            Log.info (fun m ->
+              m "SSE subscribed for %s subscriber=%s replay=%d"
+                session_id
+                subscriber_id
+                (List.length replay));
             Mutex.lock sink.mutex;
             sink.subscriber_id <- Some subscriber_id;
             Mutex.unlock sink.mutex;
@@ -419,14 +532,19 @@ let handle_session_route (server : t) meth path reqd =
   | ["sessions"; session_id] when meth = `GET ->
       begin
         match find_session server session_id with
-        | None -> Http_server.respond_json ~status:`Not_found reqd (Json_utils.error_json "Unknown session")
+        | None ->
+            Log.warn (fun m -> m "GET unknown session %s" session_id);
+            Http_server.respond_json ~status:`Not_found reqd (Json_utils.error_json "Unknown session")
         | Some session -> Http_server.respond_json reqd (`Assoc [("session", session_json session)])
       end
   | ["sessions"; session_id] when meth = `DELETE ->
       begin
         match find_session server session_id with
-        | None -> Http_server.respond_json ~status:`Not_found reqd (Json_utils.error_json "Unknown session")
+        | None ->
+            Log.warn (fun m -> m "DELETE unknown session %s" session_id);
+            Http_server.respond_json ~status:`Not_found reqd (Json_utils.error_json "Unknown session")
         | Some session ->
+            Log.info (fun m -> m "Deleting session %s" session_id);
             cleanup_session session;
             Session_store.remove_session server.sessions session_id;
             Http_server.respond_json reqd (`Assoc [("deleted", `Bool true)])
@@ -435,11 +553,15 @@ let handle_session_route (server : t) meth path reqd =
   | ["sessions"; session_id; "prompts"] when meth = `POST ->
       begin
         match find_session server session_id with
-        | None -> Http_server.respond_json ~status:`Not_found reqd (Json_utils.error_json "Unknown session")
+        | None ->
+            Log.warn (fun m -> m "POST /prompts unknown session %s" session_id);
+            Http_server.respond_json ~status:`Not_found reqd (Json_utils.error_json "Unknown session")
         | Some session ->
             read_json_body reqd (fun json ->
               match Models.parse_prompt_request json with
-              | Error err -> Http_server.respond_json ~status:`Bad_request reqd (Json_utils.error_json err)
+              | Error err ->
+                  Log.warn (fun m -> m "Invalid prompt request for %s: %s" session_id err);
+                  Http_server.respond_json ~status:`Bad_request reqd (Json_utils.error_json err)
               | Ok prompt ->
                   Http_server.submit_job server.http_server reqd (fun () ->
                     match prompt_session server session prompt with
@@ -449,11 +571,15 @@ let handle_session_route (server : t) meth path reqd =
   | ["sessions"; session_id; "tool-decisions"] when meth = `POST ->
       begin
         match find_session server session_id with
-        | None -> Http_server.respond_json ~status:`Not_found reqd (Json_utils.error_json "Unknown session")
+        | None ->
+            Log.warn (fun m -> m "POST /tool-decisions unknown session %s" session_id);
+            Http_server.respond_json ~status:`Not_found reqd (Json_utils.error_json "Unknown session")
         | Some session ->
             read_json_body reqd (fun json ->
               match Models.parse_tool_decision_request json with
-              | Error err -> Http_server.respond_json ~status:`Bad_request reqd (Json_utils.error_json err)
+              | Error err ->
+                  Log.warn (fun m -> m "Invalid tool decision request for %s: %s" session_id err);
+                  Http_server.respond_json ~status:`Bad_request reqd (Json_utils.error_json err)
               | Ok request ->
                   begin
                     ignore (Session_store.append_event server.sessions session_id ~type_:"acp.call"
@@ -470,7 +596,9 @@ let handle_session_route (server : t) meth path reqd =
   | ["sessions"; session_id; "cancel"] when meth = `POST ->
       begin
         match find_session server session_id with
-        | None -> Http_server.respond_json ~status:`Not_found reqd (Json_utils.error_json "Unknown session")
+        | None ->
+            Log.warn (fun m -> m "POST /cancel unknown session %s" session_id);
+            Http_server.respond_json ~status:`Not_found reqd (Json_utils.error_json "Unknown session")
         | Some session ->
             Http_server.submit_job server.http_server reqd (fun () ->
               match cancel_session server session with
@@ -503,7 +631,7 @@ let start (server : t) =
       Bonjour_publisher.instance_name = server.config.service_name;
       hostname = server.config.service_hostname;
       port = server.config.port;
-      version = "0.1.0";
+      version = Build_info.version;
     };
   ignore (Http_server.start server.http_server)
 

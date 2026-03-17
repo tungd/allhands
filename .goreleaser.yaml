@@ -1,0 +1,22 @@
+version: 2
+
+project_name: allhands-server
+
+dist: dist/goreleaser
+
+builds: []
+archives: []
+
+checksum:
+  disable: true
+
+source:
+  enabled: false
+
+changelog:
+  sort: asc
+
+release:
+  extra_files:
+    - glob: dist/server-release/allhands-server_*.tar.gz
+    - glob: dist/server-release/checksums.txt

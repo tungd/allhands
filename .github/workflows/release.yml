@@ -1,0 +1,110 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install zsh
+        run: sudo apt-get update && sudo apt-get install -y zsh
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Linux release archive
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/dist/server-release"
+          TARGET_ARCH=${{ matrix.arch }} \
+          VERSION=${{ github.ref_name }} \
+          OUTPUT_DIR="$GITHUB_WORKSPACE/dist/server-release" \
+          ./scripts/build_server_release_docker.sh
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: allhands-server-linux-${{ matrix.arch }}
+          path: dist/server-release/allhands-server_${{ github.ref_name }}_linux_${{ matrix.arch }}.tar.gz
+
+  build-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-13
+            arch: amd64
+          - runner: macos-14
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 5.4.0
+
+      - name: Install server deps
+        run: opam install ./server --deps-only --yes
+
+      - name: Build macOS release archive
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/dist/server-release"
+          TARGET_OS=darwin \
+          TARGET_ARCH=${{ matrix.arch }} \
+          VERSION=${{ github.ref_name }} \
+          OUTPUT_DIR="$GITHUB_WORKSPACE/dist/server-release" \
+          ./scripts/build_server_release.sh
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: allhands-server-darwin-${{ matrix.arch }}
+          path: dist/server-release/allhands-server_${{ github.ref_name }}_darwin_${{ matrix.arch }}.tar.gz
+
+  publish-release:
+    runs-on: ubuntu-latest
+    needs: [build-linux, build-macos]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install zsh
+        run: sudo apt-get update && sudo apt-get install -y zsh
+
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/server-release
+          merge-multiple: true
+
+      - name: Generate release checksums
+        run: ./scripts/generate_release_checksums.sh "$GITHUB_WORKSPACE/dist/server-release"
+
+      - name: Publish GitHub release
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --clean --config .goreleaser.yaml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

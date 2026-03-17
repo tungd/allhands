@@ -32,10 +32,14 @@ let source_root () =
   | Some root -> Filename.concat root "server"
   | None -> Sys.getcwd ()
 
+let unique_session_id () =
+  Random.self_init ();
+  Printf.sprintf "session_integration_%08x%08x" (Random.bits ()) (Random.bits ())
+
 let () =
   let repo = create_repo () in
   let worktree =
-    match Worktree_manager.create_worktree ~repo_path:repo ~session_id:"session_integration" with
+    match Worktree_manager.create_worktree ~repo_path:repo ~session_id:(unique_session_id ()) with
     | Ok path -> path
     | Error err -> failwith err
   in
@@ -59,7 +63,8 @@ let () =
     | Error err -> failwith err
   in
   let initialize =
-    Agent_rpc.send_request rpc ~method_:"initialize" ~params:(`Assoc [])
+    Agent_rpc.send_request rpc ~method_:"initialize"
+      ~params:(`Assoc [("protocolVersion", `Int 1)])
   in
   begin
     match initialize with

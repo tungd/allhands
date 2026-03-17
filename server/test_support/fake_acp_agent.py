@@ -28,15 +28,26 @@ for line in sys.stdin:
     msg_id = message.get("id")
 
     if method == "initialize":
-        send({
-            "jsonrpc": "2.0",
-            "id": msg_id,
-            "result": {
-                "protocolVersion": 1,
-                "agentInfo": {"name": "fake-agent", "version": "0.1.0"},
-                "agentCapabilities": {"promptCapabilities": {}, "sessionCapabilities": {}}
-            }
-        })
+        protocol_version = message.get("params", {}).get("protocolVersion")
+        if protocol_version != 1:
+            send({
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "error": {
+                    "code": -32602,
+                    "message": "Invalid params"
+                }
+            })
+        else:
+            send({
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": {
+                    "protocolVersion": 1,
+                    "agentInfo": {"name": "fake-agent", "version": "0.1.0"},
+                    "agentCapabilities": {"promptCapabilities": {}, "sessionCapabilities": {}}
+                }
+            })
     elif method == "session/new":
         session_counter += 1
         send({

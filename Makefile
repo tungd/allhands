@@ -1,6 +1,9 @@
 SHELL := /bin/zsh
 
-.PHONY: setup build test run-server open-ios generate-ios tailscalekit
+SERVER_RELEASE_DIR := $(CURDIR)/dist/server-release
+SERVER_RELEASE_VERSION ?= $(shell git describe --tags --always --dirty)
+
+.PHONY: setup build test server-test server-release-local run-server open-ios generate-ios tailscalekit
 
 setup:
 	cd server && opam install . --deps-only --with-test --yes
@@ -14,6 +17,10 @@ build:
 	cd ios && xcodebuild -project AllHands.xcodeproj -scheme AllHands -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
 
 test:
+	$(MAKE) server-test
+	cd ios && swift test --package-path AllHandsKit
+
+server-test:
 	cd server && dune build
 	cd server && ./_build/default/test_event_mapper.exe
 	cd server && ./_build/default/test_session_store.exe
@@ -22,7 +29,12 @@ test:
 	cd server && ./_build/default/test_launcher_catalog.exe
 	cd server && ./_build/default/test_host_server_api.exe
 	cd server && ./_build/default/test_integration.exe
-	cd ios && swift test --package-path AllHandsKit
+
+server-release-local: server-test
+	rm -rf "$(SERVER_RELEASE_DIR)"
+	TARGET_ARCH=amd64 VERSION="$(SERVER_RELEASE_VERSION)" OUTPUT_DIR="$(SERVER_RELEASE_DIR)" ./scripts/build_server_release_docker.sh
+	TARGET_ARCH=arm64 VERSION="$(SERVER_RELEASE_VERSION)" OUTPUT_DIR="$(SERVER_RELEASE_DIR)" ./scripts/build_server_release_docker.sh
+	./scripts/generate_release_checksums.sh "$(SERVER_RELEASE_DIR)"
 
 run-server:
 	cd server && dune exec ./allhands_server.exe -- --host 0.0.0.0 --port 21991

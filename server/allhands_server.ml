@@ -1,8 +1,8 @@
 module Log = (val Logs.src_log (Logs.Src.create "allhands_server") : Logs.LOG)
 
-let run ~host ~port ~service_name ~service_hostname ~bonjour_enabled =
+let run ~host ~port ~service_name ~service_hostname ~bonjour_enabled ~debug =
   Logs.set_reporter (Logs_fmt.reporter ());
-  Logs.set_level (Some Logs.Info);
+  Logs.set_level (Some (if debug then Logs.Debug else Logs.Info));
   let launch_root_path = Sys.getcwd () in
   let available_launchers = Launcher_catalog.detect_available () in
   let server = Host_server.create {
@@ -15,6 +15,7 @@ let run ~host ~port ~service_name ~service_hostname ~bonjour_enabled =
     available_launchers;
   } in
   Host_server.start server;
+  Log.info (fun m -> m "All Hands server version %s" Build_info.version);
   Log.info (fun m -> m "All Hands server listening on http://%s:%d" host port);
   Log.info (fun m -> m "Launch root: %s" launch_root_path);
   Log.info (fun m -> m "Available ACP launchers: %s"
@@ -45,12 +46,14 @@ let () =
   let service_name = ref default_service_name in
   let service_hostname = ref default_hostname in
   let bonjour_enabled = ref true in
+  let debug = ref false in
   let specs = [
     ("--host", Arg.Set_string host, "Host to bind");
     ("--port", Arg.Set_int port, "Port to bind");
     ("--service-name", Arg.Set_string service_name, "Bonjour service instance name");
     ("--service-hostname", Arg.Set_string service_hostname, "Bonjour advertised hostname");
     ("--no-bonjour", Arg.Clear bonjour_enabled, "Disable Bonjour service advertisement");
+    ("--debug", Arg.Set debug, "Enable verbose debug logging");
   ] in
   Arg.parse specs (fun _ -> ()) "allhands_server";
   run
@@ -59,3 +62,4 @@ let () =
     ~service_name:!service_name
     ~service_hostname:!service_hostname
     ~bonjour_enabled:!bonjour_enabled
+    ~debug:!debug

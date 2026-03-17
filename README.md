@@ -30,6 +30,12 @@ make run-server
 make open-ios
 ```
 
+To build portable Linux server release artifacts locally:
+
+```bash
+make server-release-local
+```
+
 The iOS app compiles without `TailscaleKit`, but Tailscale sign-in and
 tailnet networking stay in stub mode until the XCFramework is built from
 [`libtailscale/swift`](https://github.com/tailscale/libtailscale/tree/main/swift).
@@ -61,6 +67,9 @@ The server exposes:
 
 The server spawns the agent, initializes ACP over stdio, creates a dedicated git
 worktree, and emits semantic SSE events for the mobile client.
+
+`GET /server-info` also reports the server `version`, which defaults to `dev`
+for local builds and is stamped from the git tag in release builds.
 
 ## iOS
 

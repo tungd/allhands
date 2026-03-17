@@ -24,12 +24,10 @@ jobs:
         working-directory: server
 
       - name: Run server tests
-        working-directory: server
-        run: |
-          ./_build/default/test_event_mapper.exe
-          ./_build/default/test_session_store.exe
-          ./_build/default/test_worktree_manager.exe
-          ./_build/default/test_integration.exe
+        run: make server-test
+
+      - name: Validate release scripts
+        run: zsh -n scripts/build_server_release.sh scripts/build_server_release_docker.sh scripts/generate_release_checksums.sh
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app
@@ -52,3 +50,22 @@ jobs:
       - name: Build iOS app
         working-directory: ios
         run: xcodebuild -project AllHands.xcodeproj -scheme AllHands -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+
+  validate-release-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install zsh
+        run: sudo apt-get update && sudo apt-get install -y zsh
+
+      - name: Validate release scripts
+        run: zsh -n scripts/build_server_release.sh scripts/build_server_release_docker.sh scripts/generate_release_checksums.sh
+
+      - name: Validate GoReleaser config
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: check --config .goreleaser.yaml

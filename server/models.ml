@@ -38,6 +38,7 @@ type available_agent = {
 }
 
 type server_info = {
+  version : string;
   launch_root_path : string;
   default_agent : string option;
   available_agents : available_agent list;
@@ -103,6 +104,7 @@ let available_agent_to_json (agent : available_agent) =
 
 let server_info_to_json info =
   `Assoc [
+    ("version", `String info.version);
     ("launchRootPath", `String info.launch_root_path);
     ("defaultAgent",
       match info.default_agent with

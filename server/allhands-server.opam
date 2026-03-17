@@ -9,6 +9,7 @@ depends: [
   "h1"
   "iomux"
   "yojson"
+  "fmt"
   "logs"
 ]
 build: [

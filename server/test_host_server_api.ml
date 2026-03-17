@@ -136,6 +136,7 @@ let test_server_info_and_session_launch () =
     let info = http_json ~method_:"GET" (base_url ^ "/server-info") in
     assert_int_equal "server-info status" 200 (info |> member "status" |> to_int);
     let info_body = info |> member "body" in
+    assert_string_equal "server version" "dev" (info_body |> member "version" |> to_string);
     assert_string_equal "launch root" repo (info_body |> member "launchRootPath" |> to_string);
     assert_string_equal "default agent" "codex" (info_body |> member "defaultAgent" |> to_string);
     assert_int_equal "available agent count" 1 (info_body |> member "availableAgents" |> to_list |> List.length);

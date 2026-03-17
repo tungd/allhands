@@ -1,11 +1,13 @@
 .DS_Store
 .build
 .swiftpm
+dist
 .allhands
 DerivedData
 ios/AllHands.xcodeproj
 ios/Vendor
 server/_build
+server/_build_release_*
 server/.merlin
 server/.ocamlformat
 server/*.install
