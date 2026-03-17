@@ -1,6 +1,6 @@
 SHELL := /bin/zsh
 
-.PHONY: setup build test run-server open-ios generate-ios
+.PHONY: setup build test run-server open-ios generate-ios tailscalekit
 
 setup:
 	cd server && opam install . --deps-only --with-test --yes
@@ -23,7 +23,7 @@ test:
 	cd ios && swift test --package-path AllHandsKit
 
 run-server:
-	cd server && dune exec ./allhands_server.exe -- --host 127.0.0.1 --port 8080
+	cd server && dune exec ./allhands_server.exe -- --host 0.0.0.0 --port 8080 --service-name "All Hands" --service-hostname allhands
 
 open-ios:
 	cd ios && xcodegen generate
@@ -31,3 +31,6 @@ open-ios:
 
 generate-ios:
 	cd ios && xcodegen generate
+
+tailscalekit:
+	./scripts/bootstrap_tailscalekit.sh

@@ -44,6 +44,53 @@ func sessionStoreAppendsInOrder() async {
 @Test
 func directProviderReturnsSession() async throws {
     let provider = DirectSessionProvider()
+    #expect(try await provider.restore())
+    #expect(try await provider.prepareAuthenticationURL() == nil)
+    try await provider.completeAuthentication()
     let session = try await provider.makeURLSession()
     #expect(session.configuration.identifier == nil)
+}
+
+@Test
+func discoveryPrefersBonjourAndReordersLastSelected() async {
+    let provider = DirectSessionProvider()
+    let service = ServerDiscoveryService(
+        sessionProvider: provider,
+        bonjourLookup: {
+            [
+                DiscoveredServer(
+                    id: "allhands",
+                    name: "All Hands",
+                    baseURL: URL(string: "http://allhands.local:8080")!,
+                    hostname: "allhands",
+                    port: 8080,
+                    source: .bonjour
+                )
+            ]
+        },
+        magicDNSLookup: {
+            [
+                DiscoveredServer(
+                    id: "allhands",
+                    name: "allhands",
+                    baseURL: URL(string: "http://allhands:8080")!,
+                    hostname: "allhands",
+                    port: 8080,
+                    source: .magicDNS
+                ),
+                DiscoveredServer(
+                    id: "backup",
+                    name: "backup",
+                    baseURL: URL(string: "http://backup:8080")!,
+                    hostname: "backup",
+                    port: 8080,
+                    source: .magicDNS
+                )
+            ]
+        }
+    )
+
+    let discovered = await service.discover(lastSelectedServerID: "backup")
+    #expect(discovered.map(\.id) == ["backup", "allhands"])
+    #expect(discovered[1].source == .bonjour)
 }

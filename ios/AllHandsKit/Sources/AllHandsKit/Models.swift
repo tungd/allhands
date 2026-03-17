@@ -94,6 +94,50 @@ public struct SessionSummary: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+public enum DiscoverySource: String, Codable, Equatable, Sendable {
+    case bonjour
+    case magicDNS
+}
+
+public struct DiscoveredServer: Codable, Equatable, Identifiable, Sendable {
+    public var id: String
+    public var name: String
+    public var baseURL: URL
+    public var hostname: String
+    public var port: Int
+    public var source: DiscoverySource
+
+    public init(id: String, name: String, baseURL: URL, hostname: String, port: Int, source: DiscoverySource) {
+        self.id = id
+        self.name = name
+        self.baseURL = baseURL
+        self.hostname = hostname
+        self.port = port
+        self.source = source
+    }
+}
+
+public enum OnboardingStatus: Equatable, Sendable {
+    case signedOut
+    case authInProgress
+    case discovering
+    case serverSelection
+    case connected
+    case error(String)
+}
+
+public struct SessionCreationConfiguration: Equatable, Sendable {
+    public var repoPath: String
+    public var agentCommand: String
+    public var agentArgs: [String]
+
+    public init(repoPath: String, agentCommand: String, agentArgs: [String]) {
+        self.repoPath = repoPath
+        self.agentCommand = agentCommand
+        self.agentArgs = agentArgs
+    }
+}
+
 public struct StreamEvent: Codable, Equatable, Identifiable, Sendable {
     public var id: String
     public var sessionId: String
@@ -109,21 +153,5 @@ public struct StreamEvent: Codable, Equatable, Identifiable, Sendable {
         self.type = type
         self.timestamp = timestamp
         self.payload = payload
-    }
-}
-
-public struct ServerConfiguration: Equatable, Sendable {
-    public var baseURL: URL
-    public var repoPath: String
-    public var agentCommand: String
-    public var agentArgs: [String]
-    public var useTailnet: Bool
-
-    public init(baseURL: URL, repoPath: String, agentCommand: String, agentArgs: [String], useTailnet: Bool) {
-        self.baseURL = baseURL
-        self.repoPath = repoPath
-        self.agentCommand = agentCommand
-        self.agentArgs = agentArgs
-        self.useTailnet = useTailnet
     }
 }

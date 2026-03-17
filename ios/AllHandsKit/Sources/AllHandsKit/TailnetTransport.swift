@@ -7,6 +7,8 @@ import TailscaleKit
 public enum TailnetTransportError: Error, LocalizedError {
     case sdkUnavailable
     case invalidDataPath
+    case loginRequired
+    case notAuthenticated
 
     public var errorDescription: String? {
         switch self {
@@ -14,57 +16,181 @@ public enum TailnetTransportError: Error, LocalizedError {
             return "TailscaleKit.framework is not embedded in the app target."
         case .invalidDataPath:
             return "A writable data path is required for the embedded Tailscale node."
+        case .loginRequired:
+            return "Tailscale sign-in is required before continuing."
+        case .notAuthenticated:
+            return "The embedded Tailscale node is not authenticated."
         }
     }
 }
 
 public struct TailnetConfiguration: Sendable, Equatable {
     public var hostName: String
-    public var dataPath: String
-    public var authKey: String
+    public var statePath: String
     public var controlURL: String
-    public var ephemeral: Bool
 
-    public init(hostName: String, dataPath: String, authKey: String, controlURL: String = "https://controlplane.tailscale.com", ephemeral: Bool = false) {
+    public init(hostName: String, statePath: String, controlURL: String = "https://controlplane.tailscale.com") {
         self.hostName = hostName
-        self.dataPath = dataPath
-        self.authKey = authKey
+        self.statePath = statePath
         self.controlURL = controlURL
-        self.ephemeral = ephemeral
     }
 }
 
 public protocol SessionProviding: Sendable {
+    func restore() async throws -> Bool
+    func prepareAuthenticationURL() async throws -> URL?
+    func completeAuthentication() async throws
     func makeURLSession() async throws -> URLSession
+    func tailnetHostCandidates(defaults: [String]) async throws -> [String]
 }
 
 public struct DirectSessionProvider: SessionProviding {
     public init() {}
 
+    public func restore() async throws -> Bool {
+        true
+    }
+
+    public func prepareAuthenticationURL() async throws -> URL? {
+        nil
+    }
+
+    public func completeAuthentication() async throws {}
+
     public func makeURLSession() async throws -> URLSession {
         URLSession(configuration: .default)
+    }
+
+    public func tailnetHostCandidates(defaults: [String]) async throws -> [String] {
+        defaults
     }
 }
 
 #if canImport(TailscaleKit)
+private actor InteractiveLoginConsumer: MessageConsumer {
+    private var continuation: CheckedContinuation<URL, Error>?
+    private var resolved = false
+
+    func installContinuation(_ continuation: CheckedContinuation<URL, Error>) {
+        guard !resolved else {
+            continuation.resume(throwing: TailnetTransportError.loginRequired)
+            return
+        }
+        self.continuation = continuation
+    }
+
+    func notify(_ notify: Ipn.Notify) {
+        guard !resolved else { return }
+
+        if let browseToURL = notify.BrowseToURL,
+           let url = URL(string: browseToURL) {
+            resolved = true
+            continuation?.resume(returning: url)
+            continuation = nil
+        }
+    }
+
+    func error(_ error: any Error) {
+        guard !resolved else { return }
+        resolved = true
+        continuation?.resume(throwing: error)
+        continuation = nil
+    }
+
+    func finishWithoutURL() {
+        guard !resolved else { return }
+        resolved = true
+        continuation?.resume(throwing: TailnetTransportError.loginRequired)
+        continuation = nil
+    }
+}
+
 public actor TailscaleSessionProvider: SessionProviding {
     private let configuration: TailnetConfiguration
     private var node: TailscaleNode?
+    private var localAPIClient: LocalAPIClient?
+    private var cachedSession: URLSession?
 
     public init(configuration: TailnetConfiguration) {
         self.configuration = configuration
     }
 
+    public func restore() async throws -> Bool {
+        try ensureDataPath()
+        _ = try await prepareLocalAPIClient()
+        return try await backendState() == "Running"
+    }
+
+    public func prepareAuthenticationURL() async throws -> URL? {
+        let client = try await prepareLocalAPIClient()
+        if try await backendState() == "Running" {
+            return nil
+        }
+        return try await awaitInteractiveLoginURL(using: client)
+    }
+
+    public func completeAuthentication() async throws {
+        _ = try await prepareLocalAPIClient()
+        for _ in 0..<120 {
+            if try await backendState() == "Running" {
+                cachedSession = nil
+                return
+            }
+            try await Task.sleep(nanoseconds: 500_000_000)
+        }
+        throw TailnetTransportError.notAuthenticated
+    }
+
     public func makeURLSession() async throws -> URLSession {
+        if let cachedSession {
+            return cachedSession
+        }
+
+        let node = try await prepareNode()
+        guard try await backendState() == "Running" else {
+            throw TailnetTransportError.loginRequired
+        }
+
+        let sessionConfiguration = try await URLSessionConfiguration.tailscaleSession(node).0
+        let session = URLSession(configuration: sessionConfiguration)
+        cachedSession = session
+        return session
+    }
+
+    public func tailnetHostCandidates(defaults: [String]) async throws -> [String] {
+        let status = try await prepareLocalAPIClient().backendStatus()
+        var candidates: [String] = defaults
+
+        if let peers = status.Peer {
+            for peer in peers.values {
+                let dnsName = peer.DNSName.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+                if !dnsName.isEmpty {
+                    candidates.append(dnsName)
+                    if let shortName = dnsName.split(separator: ".").first.map(String.init) {
+                        candidates.append(shortName)
+                    }
+                }
+
+                if !peer.HostName.isEmpty {
+                    candidates.append(peer.HostName)
+                }
+            }
+        }
+
+        return Array(NSOrderedSet(array: candidates)) as? [String] ?? defaults
+    }
+
+    private func prepareNode() async throws -> TailscaleNode {
+        try ensureDataPath()
         if node == nil {
             let config = Configuration(
                 hostName: configuration.hostName,
-                path: configuration.dataPath,
-                authKey: configuration.authKey,
+                path: configuration.statePath,
+                authKey: nil,
                 controlURL: configuration.controlURL,
-                ephemeral: configuration.ephemeral
+                ephemeral: false
             )
-            let tailscaleNode = try TailscaleNode(config: config, logger: DefaultLogger())
+            let tailscaleNode = try TailscaleNode(config: config, logger: nil)
             try await tailscaleNode.up()
             node = tailscaleNode
         }
@@ -73,8 +199,66 @@ public actor TailscaleSessionProvider: SessionProviding {
             throw TailnetTransportError.sdkUnavailable
         }
 
-        let sessionConfiguration = try await URLSessionConfiguration.tailscaleSession(node)
-        return URLSession(configuration: sessionConfiguration)
+        return node
+    }
+
+    private func prepareLocalAPIClient() async throws -> LocalAPIClient {
+        if let localAPIClient {
+            return localAPIClient
+        }
+
+        let node = try await prepareNode()
+        let client = LocalAPIClient(localNode: node, logger: nil)
+        localAPIClient = client
+        return client
+    }
+
+    private func ensureDataPath() throws {
+        guard !configuration.statePath.isEmpty else {
+            throw TailnetTransportError.invalidDataPath
+        }
+        try FileManager.default.createDirectory(atPath: configuration.statePath, withIntermediateDirectories: true, attributes: nil)
+    }
+
+    private func backendState() async throws -> String {
+        let client = try await prepareLocalAPIClient()
+        return try await client.backendStatus().BackendState
+    }
+
+    private func awaitInteractiveLoginURL(using client: LocalAPIClient) async throws -> URL {
+        let consumer = InteractiveLoginConsumer()
+        let processor = try await client.watchIPNBus(mask: [.initialState], consumer: consumer)
+        defer { processor.cancel() }
+
+        return try await withThrowingTaskGroup(of: URL.self) { group in
+            group.addTask {
+                try await withCheckedThrowingContinuation { continuation in
+                    Task {
+                        await consumer.installContinuation(continuation)
+                    }
+                }
+            }
+
+            group.addTask {
+                try await client.startLoginInteractive()
+                for _ in 0..<20 {
+                    let status = try await client.backendStatus()
+                    if !status.AuthURL.isEmpty, let url = URL(string: status.AuthURL) {
+                        return url
+                    }
+                    try await Task.sleep(nanoseconds: 250_000_000)
+                }
+
+                await consumer.finishWithoutURL()
+                throw TailnetTransportError.loginRequired
+            }
+
+            let url = try await group.next() ?? {
+                throw TailnetTransportError.loginRequired
+            }()
+            group.cancelAll()
+            return url
+        }
     }
 }
 #else
@@ -83,8 +267,24 @@ public struct TailscaleSessionProvider: SessionProviding {
         _ = configuration
     }
 
+    public func restore() async throws -> Bool {
+        false
+    }
+
+    public func prepareAuthenticationURL() async throws -> URL? {
+        throw TailnetTransportError.sdkUnavailable
+    }
+
+    public func completeAuthentication() async throws {
+        throw TailnetTransportError.sdkUnavailable
+    }
+
     public func makeURLSession() async throws -> URLSession {
         throw TailnetTransportError.sdkUnavailable
+    }
+
+    public func tailnetHostCandidates(defaults: [String]) async throws -> [String] {
+        defaults
     }
 }
 #endif

@@ -27,6 +27,11 @@ let create_repo () =
   run_or_fail (Printf.sprintf "git -C %s commit -m init >/dev/null 2>&1" (Filename.quote repo));
   repo
 
+let source_root () =
+  match Sys.getenv_opt "DUNE_SOURCEROOT" with
+  | Some root -> Filename.concat root "server"
+  | None -> Sys.getcwd ()
+
 let () =
   let repo = create_repo () in
   let worktree =
@@ -42,7 +47,7 @@ let () =
     seen_events := ("acp.status", `Assoc [("stderr", `String line)]) :: !seen_events
   in
   let on_exit _status = () in
-  let agent_script = Filename.concat (Sys.getcwd ()) "test_support/fake_acp_agent.py" in
+  let agent_script = Filename.concat (source_root ()) "test_support/fake_acp_agent.py" in
   let rpc =
     match Agent_rpc.create
             ~command:"/usr/bin/env"

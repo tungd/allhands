@@ -6,6 +6,7 @@
   json_utils
   models
   acp_transport
+  bonjour_publisher
   http_server
   worktree_manager
   agent_process

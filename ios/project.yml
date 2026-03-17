@@ -8,21 +8,32 @@ targets:
   AllHands:
     type: application
     platform: iOS
-    deploymentTarget: "18.0"
+    deploymentTarget: "26.0"
     sources:
       - path: AllHandsApp
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.allhands.app
         PRODUCT_NAME: AllHands
+        DEVELOPMENT_TEAM: P2FJWTSN96
+        CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: All Hands discovers nearby servers over Bonjour after Tailnet authentication.
+        INFOPLIST_KEY_NSBonjourServices:
+          - _allhands._tcp
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        LD_RUNPATH_SEARCH_PATHS:
+          - $(inherited)
+          - "@executable_path/Frameworks"
+          - "@loader_path/Frameworks"
         SWIFT_VERSION: 6.0
-        CODE_SIGNING_ALLOWED: NO
         FRAMEWORK_SEARCH_PATHS:
           - $(PROJECT_DIR)/Vendor/TailscaleKit
     dependencies:
       - package: AllHandsKit
+      - framework: Vendor/TailscaleKit/TailscaleKit.xcframework
+        embed: true
     scheme:
       testTargets: []

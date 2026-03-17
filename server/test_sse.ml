@@ -53,8 +53,13 @@ let make_session id =
     ~agent_command:"/bin/echo"
     ~agent_args:[]
 
+let source_root () =
+  match Sys.getenv_opt "DUNE_SOURCEROOT" with
+  | Some root -> Filename.concat root "server"
+  | None -> Sys.getcwd ()
+
 let sse_client_script () =
-  Filename.concat (Sys.getcwd ()) "test_support/sse_client.py"
+  Filename.concat (source_root ()) "test_support/sse_client.py"
 
 let sse_url port session_id =
   Printf.sprintf "http://127.0.0.1:%d/sessions/%s/events" port session_id
@@ -120,7 +125,13 @@ let join_sse_client ready_file worker =
 
 let with_server_session name f =
   let port = find_free_port () in
-  let server = Host_server.create { Host_server.host = "127.0.0.1"; Host_server.port = port } in
+  let server = Host_server.create {
+    Host_server.host = "127.0.0.1";
+    port;
+    service_name = "All Hands Test";
+    service_hostname = "allhands-test";
+    bonjour_enabled = false;
+  } in
   let session = make_session ("session_" ^ name) in
   Host_server.start server;
   wait_until "HTTP server startup" (fun () -> Http_server.is_running server.Host_server.http_server);

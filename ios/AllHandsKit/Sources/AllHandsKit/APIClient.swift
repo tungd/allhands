@@ -25,8 +25,11 @@ public struct APIClient: Sendable {
         self.session = session
     }
 
-    public func health() async throws {
-        let request = URLRequest(url: baseURL.appending(path: "healthz"))
+    public func health(timeout: TimeInterval? = nil) async throws {
+        var request = URLRequest(url: baseURL.appending(path: "healthz"))
+        if let timeout {
+            request.timeoutInterval = timeout
+        }
         let (_, response) = try await session.data(for: request)
         try validate(response: response)
     }

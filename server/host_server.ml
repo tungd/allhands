@@ -6,12 +6,16 @@ module Async_response = Http_server.Async_response
 type config = {
   host : string;
   port : int;
+  service_name : string;
+  service_hostname : string;
+  bonjour_enabled : bool;
 }
 
 type t = {
   http_server : Http_server.t;
   sessions : Session_store.t;
   config : config;
+  mutable bonjour_publisher : Bonjour_publisher.t option;
 }
 
 type sse_sink = {
@@ -448,6 +452,7 @@ let create config =
     http_server;
     sessions = Session_store.create ();
     config;
+    bonjour_publisher = None;
   } in
   Http_server.add_route http_server ~method_:None ~match_type:Http_server.Prefix "/sessions"
     (fun reqd ->
@@ -459,9 +464,18 @@ let create config =
   server
 
 let start (server : t) =
+  if server.config.bonjour_enabled then
+    server.bonjour_publisher <- Bonjour_publisher.start {
+      Bonjour_publisher.instance_name = server.config.service_name;
+      hostname = server.config.service_hostname;
+      port = server.config.port;
+      version = "0.1.0";
+    };
   ignore (Http_server.start server.http_server)
 
 let stop (server : t) =
+  Bonjour_publisher.stop server.bonjour_publisher;
+  server.bonjour_publisher <- None;
   Session_store.all_sessions server.sessions
   |> List.iter (fun session ->
        cleanup_session session;

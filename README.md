@@ -23,14 +23,15 @@ live agent session.
 
 ```bash
 make setup
+make tailscalekit
 make build
 make test
 make run-server
 make open-ios
 ```
 
-The iOS app compiles without `TailscaleKit.framework`, but tailnet networking
-stays in stub mode until the framework is made available from
+The iOS app compiles without `TailscaleKit`, but Tailscale sign-in and
+tailnet networking stay in stub mode until the XCFramework is built from
 [`libtailscale/swift`](https://github.com/tailscale/libtailscale/tree/main/swift).
 See [`docs/architecture.md`](/Users/tung/Projects/std23/allhands/docs/architecture.md)
 for the integration boundary.
@@ -71,4 +72,14 @@ xcodegen generate
 open AllHands.xcodeproj
 ```
 
+To build and install the upstream Tailscale binary dependency into
+`ios/Vendor/TailscaleKit/TailscaleKit.xcframework`, run:
+
+```bash
+make tailscalekit
+```
+
 The non-UI code lives in `ios/AllHandsKit`, which also has the package tests.
+The app now defaults to Tailscale onboarding, then discovers servers via
+Bonjour on LAN and a stable MagicDNS hostname fallback (`allhands:8080`) on the
+tailnet.
