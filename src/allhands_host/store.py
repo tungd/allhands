@@ -36,6 +36,31 @@ class SessionStore:
             raise KeyError(session_id)
         return SessionRecord(**dict(row))
 
+    def list_sessions(self) -> list[SessionRecord]:
+        with self.db.connect() as connection:
+            rows = connection.execute(
+                "select * from sessions order by updated_at desc, created_at desc"
+            ).fetchall()
+        return [SessionRecord(**dict(row)) for row in rows]
+
+    def update_status(self, session_id: str, status: str) -> SessionRecord:
+        updated_at = utc_now()
+        with self.db.connect() as connection:
+            connection.execute(
+                "update sessions set status = ?, updated_at = ? where id = ?",
+                (status, updated_at, session_id),
+            )
+        session = self.get_session(session_id)
+        return SessionRecord(
+            id=session.id,
+            launcher=session.launcher,
+            repo_path=session.repo_path,
+            worktree_path=session.worktree_path,
+            status=status,
+            created_at=session.created_at,
+            updated_at=updated_at,
+        )
+
     def append_event(self, session_id: str, type_: str, payload: dict) -> EventRecord:
         with self.db.connect() as connection:
             current = connection.execute(

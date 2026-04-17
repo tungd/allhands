@@ -19,3 +19,4 @@ server/.coverage
 .venv/
 __pycache__/
 *.pyc
+.allhands.sqlite3
