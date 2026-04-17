@@ -41,7 +41,6 @@ let api_headers = [("cache-control", "private, no-store")]
 let ui_html_cache_control = "no-cache, must-revalidate"
 let ui_asset_cache_control = "no-cache, must-revalidate"
 let immutable_asset_cache_control = "public, max-age=31536000, immutable"
-let mithril_asset_name = "mithril-2.3.8.min.js"
 
 let string_of_process_status = function
   | Unix.WEXITED code -> Printf.sprintf "exit:%d" code
@@ -102,10 +101,17 @@ let request_header request name =
   H1.Headers.get (request : H1.Request.t).headers name
 
 let format_sse_event (event : Models.stream_event) =
-  Printf.sprintf "id: %s\nevent: %s\ndata: %s\n\n"
+  let html = Ui_view.render_event_card event |> Ui_view.to_string_elt in
+  let data =
+    html
+    |> String.split_on_char '\n'
+    |> List.map (fun line -> "data: " ^ line)
+    |> String.concat "\n"
+  in
+  Printf.sprintf "id: %s\nevent: %s\n%s\n\n"
     event.Models.id
     event.Models.type_
-    (Yojson.Safe.to_string (Models.stream_event_to_json event))
+    data
 
 let cleanup_sse_sink sink =
   let subscriber_id, should_close =
@@ -647,20 +653,14 @@ let handle_sse (server : t) session_id reqd =
             write_replay replay
       end
 
-let serve_ui_shell reqd =
-  serve_ui_file reqd
-    ~file_name:"index.html"
-    ~content_type:"text/html; charset=utf-8"
-    ~cache_control:ui_html_cache_control
-
 let serve_ui_asset reqd asset_name =
   let asset_spec =
     match asset_name with
-    | "app.js" | "api.js" | "event_utils.js" | "session_store.js" | "view.js" ->
+    | "htmx-sse.js" ->
         Some ("text/javascript; charset=utf-8", ui_asset_cache_control)
     | "app.css" ->
         Some ("text/css; charset=utf-8", ui_asset_cache_control)
-    | asset when String.equal asset mithril_asset_name ->
+    | "htmx-2.0.4.min.js" ->
         Some ("text/javascript; charset=utf-8", immutable_asset_cache_control)
     | _ -> None
   in
@@ -670,10 +670,21 @@ let serve_ui_asset reqd asset_name =
   | _ ->
       Http_server.respond_text ~status:`Not_found reqd "Asset not found"
 
-let handle_ui_route path reqd =
+let handle_ui_route server path reqd =
   match split_segments path with
-  | ["ui"] -> serve_ui_shell reqd
-  | ["ui"; "session"; _session_id] -> serve_ui_shell reqd
+  | ["ui"] ->
+      let html = Ui_view.render_home () |> Ui_view.to_string in
+      Http_server.respond_text ~headers:[("content-type", "text/html; charset=utf-8")] reqd html
+  | ["ui"; "session"; session_id] ->
+      begin
+        match find_session server session_id with
+        | None ->
+            Http_server.respond_text ~status:`Not_found reqd "Session not found"
+        | Some session ->
+            let summary = Agent_session.to_summary session in
+            let html = Ui_view.render_session summary |> Ui_view.to_string in
+            Http_server.respond_text ~headers:[("content-type", "text/html; charset=utf-8")] reqd html
+      end
   | ["ui"; "assets"; asset_name] -> serve_ui_asset reqd asset_name
   | _ -> Http_server.respond_text ~status:`Not_found reqd "Not found"
 
@@ -795,12 +806,12 @@ let create config =
       let path, _query = Http_server.split_path_query request.target in
       handle_session_route server request.meth path reqd);
   Http_server.add_route http_server ~method_:(Some `GET) "/ui"
-    (fun reqd -> handle_ui_route "/ui" reqd);
+    (fun reqd -> handle_ui_route server "/ui" reqd);
   Http_server.add_route http_server ~method_:(Some `GET) ~match_type:Http_server.Prefix "/ui/"
     (fun reqd ->
       let request = Http_server.Reqd.request reqd in
       let path, _query = Http_server.split_path_query request.target in
-      handle_ui_route path reqd);
+      handle_ui_route server path reqd);
   Http_server.add_route http_server ~method_:(Some `GET) "/healthz" health_handler;
   Http_server.add_route http_server ~method_:(Some `GET) "/server-info" (server_info_handler server);
   Http_server.add_route http_server ~method_:(Some `POST) "/sessions" (create_session_handler server);

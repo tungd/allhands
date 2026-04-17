@@ -66,7 +66,7 @@ let make_session id =
 
 let source_root () =
   match Sys.getenv_opt "DUNE_SOURCEROOT" with
-  | Some root -> Filename.concat root "server"
+  | Some root -> root
   | None -> Sys.getcwd ()
 
 let sse_client_script () =

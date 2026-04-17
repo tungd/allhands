@@ -15,3 +15,4 @@ server/*.opam.locked
 server/.coverage
 *.swp
 *.orig
+.superpowers/

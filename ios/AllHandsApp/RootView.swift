@@ -126,7 +126,7 @@ struct RootView: View {
                                 Text(agent.displayName).tag(agent.id)
                             }
                         }
-                        .pickerStyle(.segmented)
+                        .pickerStyle(.menu)
                     }
                 } else {
                     ProgressView("Loading server info…")

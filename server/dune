@@ -1,7 +1,7 @@
 (library
  (name allhands_server_lib)
  (wrapped false)
- (libraries h1 iomux yojson logs unix)
+ (libraries h1 iomux yojson logs unix tyxml)
  (foreign_stubs
   (language c)
   (names musl_compat))
@@ -14,6 +14,7 @@
   bonjour_publisher
   http_server
   web_ui_assets
+  ui_view
   worktree_manager
   agent_process
   agent_rpc

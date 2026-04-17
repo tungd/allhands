@@ -12,6 +12,7 @@ depends: [
   "fmt"
   "logs"
   "crunch"
+  "tyxml"
 ]
 build: [
   ["dune" "build" "-p" name "-j" jobs]

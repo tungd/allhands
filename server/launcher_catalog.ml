@@ -19,6 +19,13 @@ let claude_launcher = {
   args = [];
 }
 
+let gemini_launcher = {
+  id = "gemini";
+  display_name = "Gemini CLI";
+  command = "gemini";
+  args = ["--acp"];
+}
+
 let split_path path =
   String.split_on_char ':' path
   |> List.filter (fun segment -> segment <> "")
@@ -43,6 +50,8 @@ let executable_exists executable =
 
 let detect_available_with probe =
   let launchers = ref [] in
+  if probe "gemini" then
+    launchers := gemini_launcher :: !launchers;
   if probe "codex" && probe "codex-acp" then
     launchers := codex_launcher :: !launchers;
   if probe "claude" && probe "claude-agent-acp" then
@@ -57,6 +66,8 @@ let default_agent_id launchers =
     Some codex_launcher.id
   else if List.exists (fun launcher -> String.equal launcher.id claude_launcher.id) launchers then
     Some claude_launcher.id
+  else if List.exists (fun launcher -> String.equal launcher.id gemini_launcher.id) launchers then
+    Some gemini_launcher.id
   else
     None
 

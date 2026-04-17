@@ -17,13 +17,15 @@ let ensure_dir path =
 let test_detect_available_with () =
   let launchers =
     Launcher_catalog.detect_available_with (function
-      | "codex" | "codex-acp" | "claude" -> true
+      | "codex" | "codex-acp" | "claude" | "gemini" -> true
       | _ -> false)
   in
   assert_true "codex should be detected"
     (List.exists (fun launcher -> launcher.Launcher_catalog.id = "codex") launchers);
   assert_true "claude should not be detected without adapter"
     (not (List.exists (fun launcher -> launcher.Launcher_catalog.id = "claude") launchers));
+  assert_true "gemini should be detected"
+    (List.exists (fun launcher -> launcher.Launcher_catalog.id = "gemini") launchers);
   assert_string_equal "default agent prefers codex"
     "codex"
     (Option.value ~default:"" (Launcher_catalog.default_agent_id launchers))
