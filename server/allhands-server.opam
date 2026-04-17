@@ -13,6 +13,7 @@ depends: [
   "logs"
   "crunch"
   "tyxml"
+  "uri"
 ]
 build: [
   ["dune" "build" "-p" name "-j" jobs]

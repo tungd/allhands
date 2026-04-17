@@ -74,7 +74,13 @@ let serve_ui_file reqd ~file_name ~content_type ~cache_control =
   | _ ->
     Http_server.respond_text ~status:`Not_found reqd "Asset not found"
 
-let read_json_body reqd on_json =
+let read_any_body reqd on_json =
+  let request = Http_server.Reqd.request reqd in
+  let content_type =
+    match H1.Headers.get request.headers "content-type" with
+    | Some ct -> String.lowercase_ascii ct
+    | None -> "application/json"
+  in
   Http_server.read_body (Http_server.Reqd.request_body reqd) (function
     | Error (`Too_large max_bytes) ->
         respond_api_json ~status:`Payload_too_large reqd (`Assoc [
@@ -86,11 +92,27 @@ let read_json_body reqd on_json =
           ("error", `String (Printexc.to_string exn));
         ])
     | Ok body ->
-        try on_json (Yojson.Safe.from_string body)
-        with Yojson.Json_error err ->
-          respond_api_json ~status:`Bad_request reqd (`Assoc [
-            ("error", `String ("Invalid JSON: " ^ err));
-          ]))
+        if String.starts_with ~prefix:"application/x-www-form-urlencoded" content_type then
+          let pairs =
+            body
+            |> String.split_on_char '&'
+            |> List.filter_map (fun pair ->
+                 match String.split_on_char '=' pair with
+                 | [k; v] ->
+                     let decode s =
+                       let s = String.map (fun c -> if c = '+' then ' ' else c) s in
+                       try Uri.pct_decode s with _ -> s
+                     in
+                     Some (decode k, `String (decode v))
+                 | _ -> None)
+          in
+          on_json (`Assoc pairs)
+        else
+          try on_json (Yojson.Safe.from_string body)
+          with Yojson.Json_error err ->
+            respond_api_json ~status:`Bad_request reqd (`Assoc [
+              ("error", `String ("Invalid JSON: " ^ err));
+            ]))
 
 let split_segments path =
   path
@@ -108,9 +130,8 @@ let format_sse_event (event : Models.stream_event) =
     |> List.map (fun line -> "data: " ^ line)
     |> String.concat "\n"
   in
-  Printf.sprintf "id: %s\nevent: %s\n%s\n\n"
+  Printf.sprintf "id: %s\nevent: message\n%s\n\n"
     event.Models.id
-    event.Models.type_
     data
 
 let cleanup_sse_sink sink =
@@ -553,7 +574,7 @@ let server_info_handler (server : t) reqd =
   respond_api_json reqd (Models.server_info_to_json server_info)
 
 let create_session_handler (server : t) reqd =
-  read_json_body reqd (fun json ->
+  read_any_body reqd (fun json ->
     Log.info (fun m -> m "POST /sessions payload=%s" (json_to_string json));
     match Models.parse_create_session_request json with
     | Error err ->
@@ -719,7 +740,7 @@ let handle_session_route (server : t) meth path reqd =
             Log.warn (fun m -> m "POST /prompts unknown session %s" session_id);
             respond_api_json ~status:`Not_found reqd (Json_utils.error_json "Unknown session")
         | Some session ->
-            read_json_body reqd (fun json ->
+            read_any_body reqd (fun json ->
               match Models.parse_prompt_request json with
               | Error err ->
                   Log.warn (fun m -> m "Invalid prompt request for %s: %s" session_id err);
@@ -742,7 +763,7 @@ let handle_session_route (server : t) meth path reqd =
             Log.warn (fun m -> m "POST /tool-decisions unknown session %s" session_id);
             respond_api_json ~status:`Not_found reqd (Json_utils.error_json "Unknown session")
         | Some session ->
-            read_json_body reqd (fun json ->
+            read_any_body reqd (fun json ->
               match Models.parse_tool_decision_request json with
               | Error err ->
                   Log.warn (fun m -> m "Invalid tool decision request for %s: %s" session_id err);

@@ -1,7 +1,7 @@
 (library
  (name allhands_server_lib)
  (wrapped false)
- (libraries h1 iomux yojson logs unix tyxml)
+ (libraries h1 iomux yojson logs unix tyxml uri)
  (foreign_stubs
   (language c)
   (names musl_compat))

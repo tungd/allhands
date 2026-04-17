@@ -1,5 +1,12 @@
 open Tyxml.Html
 
+let hx_post = Unsafe.string_attrib "hx-post"
+let hx_swap = Unsafe.string_attrib "hx-swap"
+let hx_ext = Unsafe.string_attrib "hx-ext"
+let sse_connect = Unsafe.string_attrib "sse-connect"
+let sse_swap = Unsafe.string_attrib "sse-swap"
+let hx_on = fun event -> Unsafe.string_attrib ("hx-on:" ^ event)
+
 let status_class = function
   | "ready" -> "status-ready"
   | "busy" -> "status-busy"
@@ -15,6 +22,8 @@ let layout ?(title="All Hands") content =
       link ~rel:[`Stylesheet] ~href:"/ui/assets/app.css" ();
       script ~a:[a_src "/ui/assets/htmx-2.0.4.min.js"] (txt "");
       script ~a:[a_src "/ui/assets/htmx-sse.js"] (txt "");
+      Unsafe.node "script" [txt "document.addEventListener('htmx:sseError', (e) => console.error('SSE Error:', e));"];
+      Unsafe.node "script" [txt "document.addEventListener('htmx:sseBeforeMessage', (e) => console.log('SSE Message:', e.detail.data));"];
     ])
     (body [
       div ~a:[a_class ["page-background"]] [];
@@ -78,25 +87,25 @@ let render_session (session : Models.session_summary) =
           span ~a:[a_id "status-pill"; a_class ["status-pill"; status_class session.status]] [txt session.status];
           button ~a:[
             a_class ["button"; "button-secondary"];
-            a_user_data "hx-post" ("/sessions/" ^ session.id ^ "/cancel");
-            a_user_data "hx-swap" "none"
+            hx_post ("/sessions/" ^ session.id ^ "/cancel");
+            hx_swap "none"
           ] [txt "Cancel"]
         ]
       ];
-      main ~a:[
-        a_class ["session-content"];
-        a_user_data "hx-ext" "sse";
-        a_user_data "sse-connect" ("/sessions/" ^ session.id ^ "/events");
-        a_user_data "sse-swap" "acp.init,acp.status,acp.thought,acp.call,acp.patch,acp.error";
-        a_user_data "hx-swap" "beforeend"
-      ] [
-        div ~a:[a_class ["timeline"]] []
+      main ~a:[a_class ["session-content"]] [
+        div ~a:[
+          a_class ["timeline"];
+          hx_ext "sse";
+          sse_connect ("/sessions/" ^ session.id ^ "/events");
+          sse_swap "message";
+          hx_swap "beforeend"
+        ] []
       ];
       form ~a:[
         a_class ["composer"];
-        a_user_data "hx-post" ("/sessions/" ^ session.id ^ "/prompts");
-        a_user_data "hx-swap" "none";
-        a_user_data "hx-on--after-request" "this.reset()"
+        hx_post ("/sessions/" ^ session.id ^ "/prompts");
+        hx_swap "none";
+        hx_on "htmx:after-request" "this.reset()"
       ] [
         label ~a:[a_label_for "prompt"; a_class ["field-label"]] [txt "Prompt"];
         textarea ~a:[
