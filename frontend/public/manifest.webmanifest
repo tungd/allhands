@@ -1,0 +1,9 @@
+{
+  "name": "All Hands",
+  "short_name": "All Hands",
+  "display": "standalone",
+  "start_url": "/",
+  "background_color": "#f6f5f1",
+  "theme_color": "#f6f5f1",
+  "icons": []
+}

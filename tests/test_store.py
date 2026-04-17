@@ -24,3 +24,23 @@ def test_store_persists_sessions_and_events(tmp_path: Path):
     assert fetched.id == session.id
     assert fetched.status == "created"
     assert events[0].type == "session.created"
+
+
+def test_store_persists_push_subscriptions(tmp_path: Path):
+    db = Database(tmp_path / "allhands.sqlite3")
+    db.migrate()
+    store = SessionStore(db)
+
+    store.save_push_subscription(
+        endpoint="https://example.invalid/subscription",
+        keys={"p256dh": "public", "auth": "secret"},
+    )
+
+    subscriptions = store.list_push_subscriptions()
+
+    assert subscriptions == [
+        {
+            "endpoint": "https://example.invalid/subscription",
+            "keys": {"p256dh": "public", "auth": "secret"},
+        }
+    ]

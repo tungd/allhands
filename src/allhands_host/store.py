@@ -110,3 +110,49 @@ class SessionStore:
             )
             for row in rows
         ]
+
+    def save_push_subscription(self, endpoint: str, keys: dict[str, str]) -> None:
+        with self.db.connect() as connection:
+            connection.execute(
+                """
+                insert into push_subscriptions (endpoint, keys_json, created_at)
+                values (?, ?, ?)
+                on conflict(endpoint) do update set
+                  keys_json = excluded.keys_json
+                """,
+                (endpoint, json.dumps(keys), utc_now()),
+            )
+
+    def list_push_subscriptions(self) -> list[dict[str, object]]:
+        with self.db.connect() as connection:
+            rows = connection.execute(
+                """
+                select endpoint, keys_json, created_at
+                from push_subscriptions
+                order by created_at desc
+                """
+            ).fetchall()
+        return [
+            {
+                "endpoint": row["endpoint"],
+                "keys": json.loads(row["keys_json"]),
+            }
+            for row in rows
+        ]
+
+    def last_bound_agent_session_id(self, session_id: str) -> str:
+        with self.db.connect() as connection:
+            row = connection.execute(
+                """
+                select payload_json
+                from events
+                where session_id = ? and type = 'session.bound'
+                order by seq desc
+                limit 1
+                """,
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(session_id)
+        payload = json.loads(row["payload_json"])
+        return payload["agentSessionId"]

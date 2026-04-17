@@ -1,4 +1,8 @@
+import asyncio
+from pathlib import Path
+
 import tornado.escape
+import tornado.iostream
 import tornado.web
 
 from allhands_host.config import Settings
@@ -21,6 +25,7 @@ class ServerInfoHandler(tornado.web.RequestHandler):
                 "projectRoot": str(self.settings_obj.project_root),
                 "availableLaunchers": available_launchers(),
                 "transport": "sse",
+                "vapidPublicKey": self.settings_obj.vapid_public_key,
             }
         )
 
@@ -87,10 +92,45 @@ class SessionEventsHandler(tornado.web.RequestHandler):
         self.set_header("Content-Type", "text/event-stream")
         self.set_header("Cache-Control", "no-cache")
         last_event_id = int(self.request.headers.get("Last-Event-ID", "0"))
-        for event in self.session_service.list_events(session_id, last_event_id):
-            self.write(
-                f"id: {event.seq}\n"
-                f"event: {event.type}\n"
-                f"data: {tornado.escape.json_encode(event.payload)}\n\n"
-            )
-        await self.flush()
+        live_stream = "text/event-stream" in self.request.headers.get("Accept", "")
+
+        try:
+            while True:
+                events = self.session_service.list_events(session_id, last_event_id)
+                for event in events:
+                    self.write(
+                        f"id: {event.seq}\n"
+                        f"event: {event.type}\n"
+                        f"data: {tornado.escape.json_encode(event.payload)}\n\n"
+                    )
+                    last_event_id = event.seq
+                await self.flush()
+                if not live_stream:
+                    break
+                await asyncio.sleep(0.25)
+        except tornado.iostream.StreamClosedError:
+            return
+
+
+class PushSubscriptionHandler(tornado.web.RequestHandler):
+    def initialize(self, notification_service) -> None:
+        self.notification_service = notification_service
+
+    def post(self) -> None:
+        payload = tornado.escape.json_decode(self.request.body or b"{}")
+        self.notification_service.store.save_push_subscription(
+            endpoint=payload["endpoint"],
+            keys=payload["keys"],
+        )
+        self.set_status(204)
+
+
+class FrontendShellHandler(tornado.web.RequestHandler):
+    def initialize(self, frontend_dist: Path) -> None:
+        self.index_path = Path(frontend_dist) / "index.html"
+
+    def get(self, path: str = "") -> None:
+        if not self.index_path.exists():
+            raise tornado.web.HTTPError(404)
+        self.set_header("Content-Type", "text/html; charset=UTF-8")
+        self.finish(self.index_path.read_bytes())

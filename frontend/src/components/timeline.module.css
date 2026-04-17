@@ -1,0 +1,4 @@
+.timeline {
+  display: grid;
+  gap: 12px;
+}

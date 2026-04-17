@@ -1,0 +1,10 @@
+.box {
+  display: grid;
+  gap: 8px;
+}
+
+.input {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 12px;
+}

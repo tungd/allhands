@@ -21,6 +21,12 @@ create table if not exists events (
   created_at text not null,
   primary key (session_id, seq)
 );
+
+create table if not exists push_subscriptions (
+  endpoint text primary key,
+  keys_json text not null,
+  created_at text not null
+);
 """
 
 

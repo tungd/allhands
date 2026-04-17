@@ -1,7 +1,7 @@
 from dataclasses import asdict
 from pathlib import Path
 
-from allhands_host.acp_attachment import Attachment, attach_and_initialize
+from allhands_host.acp_attachment import Attachment, attach_and_initialize, attach_and_resume
 from allhands_host.config import Settings
 from allhands_host.db import Database
 from allhands_host.launchers.catalog import LauncherCatalog
@@ -55,6 +55,7 @@ class SessionService:
             cwd=command.cwd,
         )
         self.attachments[session.id] = attachment
+        self.store.append_event(session.id, "session.bound", {"agentSessionId": attachment.agent_session_id})
         await attachment.prompt(prompt)
         self.store.update_status(session.id, "running")
         return self.store.get_session(session.id)
@@ -76,7 +77,20 @@ class SessionService:
         return True
 
     async def resume(self, session_id: str) -> SessionRecord:
-        return self.store.get_session(session_id)
+        session = self.store.get_session(session_id)
+        session_token = self.store.last_bound_agent_session_id(session_id)
+        command = self.launcher_catalog.get(session.launcher).build_resume_command(session_token=session_token)
+        attachment = await attach_and_resume(
+            session=session,
+            store=self.store,
+            argv=command.argv,
+            cwd=Path(session.worktree_path),
+            session_token=session_token,
+        )
+        self.attachments[session.id] = attachment
+        self.store.append_event(session.id, "session.bound", {"agentSessionId": session_token})
+        self.store.update_status(session.id, "running")
+        return self.store.get_session(session.id)
 
     def archive(self, session_id: str) -> SessionRecord:
         return self.store.update_status(session_id, "archived")

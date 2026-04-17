@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import tempfile
 
 from tornado.testing import AsyncHTTPTestCase
 
@@ -18,6 +19,19 @@ class FakeEvent:
         self.seq = seq
         self.type = type_
         self.payload = payload
+
+
+class FakeNotificationStore:
+    def __init__(self):
+        self.saved = []
+
+    def save_push_subscription(self, endpoint: str, keys: dict[str, str]):
+        self.saved.append({"endpoint": endpoint, "keys": keys})
+
+
+class FakeNotificationService:
+    def __init__(self):
+        self.store = FakeNotificationStore()
 
 
 class FakeSessionService:
@@ -39,6 +53,7 @@ class FakeSessionService:
 
 class SessionApiTest(AsyncHTTPTestCase):
     def get_app(self):
+        self.notification_service = FakeNotificationService()
         settings = Settings(
             project_root=Path("/tmp/projects"),
             database_path=Path("/tmp/allhands.sqlite3"),
@@ -47,7 +62,11 @@ class SessionApiTest(AsyncHTTPTestCase):
             vapid_public_key="pub",
             vapid_private_key="priv",
         )
-        return build_app(settings=settings, session_service=FakeSessionService())
+        return build_app(
+            settings=settings,
+            session_service=FakeSessionService(),
+            notification_service=self.notification_service,
+        )
 
     def test_create_session_returns_session_id(self):
         response = self.fetch(
@@ -74,3 +93,76 @@ class SessionApiTest(AsyncHTTPTestCase):
         assert response.headers["Content-Type"].startswith("text/event-stream")
         assert "id: 1" in body
         assert "event: session.created" in body
+
+    def test_push_subscription_endpoint_persists_subscription(self):
+        response = self.fetch(
+            "/push/subscriptions",
+            method="POST",
+            body=json.dumps(
+                {
+                    "endpoint": "https://example.invalid/subscription",
+                    "keys": {"p256dh": "public", "auth": "secret"},
+                }
+            ),
+        )
+
+        assert response.code == 204
+        assert self.notification_service.store.saved == [
+            {
+                "endpoint": "https://example.invalid/subscription",
+                "keys": {"p256dh": "public", "auth": "secret"},
+            }
+        ]
+
+
+class FrontendShellTest(AsyncHTTPTestCase):
+    def setUp(self):
+        self.frontend_dist = tempfile.TemporaryDirectory()
+        dist_path = Path(self.frontend_dist.name)
+        (dist_path / "assets").mkdir()
+        (dist_path / "index.html").write_text("<!doctype html><html><body>All Hands UI</body></html>")
+        (dist_path / "manifest.webmanifest").write_text('{"name":"All Hands"}')
+        (dist_path / "sw.js").write_text('self.addEventListener("push", () => {});')
+        super().setUp()
+
+    def tearDown(self):
+        super().tearDown()
+        self.frontend_dist.cleanup()
+
+    def get_app(self):
+        settings = Settings(
+            project_root=Path("/tmp/projects"),
+            database_path=Path("/tmp/allhands.sqlite3"),
+            host="127.0.0.1",
+            port=21991,
+            vapid_public_key="pub",
+            vapid_private_key="priv",
+        )
+        return build_app(
+            settings=settings,
+            session_service=FakeSessionService(),
+            notification_service=FakeNotificationService(),
+            frontend_dist=Path(self.frontend_dist.name),
+        )
+
+    def test_root_serves_frontend_shell(self):
+        response = self.fetch("/")
+
+        assert response.code == 200
+        assert response.headers["Content-Type"].startswith("text/html")
+        assert "All Hands UI" in response.body.decode()
+
+    def test_control_room_route_falls_back_to_index(self):
+        response = self.fetch("/control-room")
+
+        assert response.code == 200
+        assert "All Hands UI" in response.body.decode()
+
+    def test_pwa_assets_are_served(self):
+        manifest = self.fetch("/manifest.webmanifest")
+        service_worker = self.fetch("/sw.js")
+
+        assert manifest.code == 200
+        assert '"name":"All Hands"' in manifest.body.decode()
+        assert service_worker.code == 200
+        assert "self.addEventListener" in service_worker.body.decode()

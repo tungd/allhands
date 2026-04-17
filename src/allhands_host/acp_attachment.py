@@ -98,3 +98,36 @@ async def attach_and_initialize(
         process=process,
         agent_session_id=new_session.sessionId,
     )
+
+
+async def attach_and_resume(
+    session: SessionRecord,
+    store: SessionStore,
+    argv: list[str],
+    cwd: Path,
+    session_token: str,
+) -> Attachment:
+    process = await asyncio.create_subprocess_exec(
+        *argv,
+        cwd=str(cwd),
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    assert process.stdin is not None
+    assert process.stdout is not None
+
+    client = RecordingClient(session=session, store=store)
+    connection = acp.connect_to_agent(client, process.stdin, process.stdout)
+    store.append_event(session.id, "session.attached", {"mode": "resume"})
+    await connection.initialize(protocol_version=acp.PROTOCOL_VERSION)
+    store.append_event(session.id, "acp.initialized", {"mode": "resume"})
+    await connection.resume_session(cwd=str(cwd), session_id=session_token)
+
+    return Attachment(
+        session=session,
+        store=store,
+        connection=connection,
+        process=process,
+        agent_session_id=session_token,
+    )

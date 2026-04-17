@@ -1,0 +1,12 @@
+.card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  box-shadow: var(--shadow-soft);
+  padding: 16px;
+}
+
+.meta {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
