@@ -1,0 +1,18 @@
+[project]
+name = "allhands-host"
+version = "0.1.0"
+description = "Single-user ACP mobile host"
+requires-python = ">=3.12"
+dependencies = [
+  "agent-client-protocol>=0.1.0",
+  "tornado>=6.4",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3",
+  "pytest-asyncio>=0.23",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
