@@ -1,11 +1,14 @@
 import tornado.web
 
-from allhands_host.http import HealthHandler
+from allhands_host.config import Settings, load_settings
+from allhands_host.http import HealthHandler, ServerInfoHandler
 
 
-def build_app() -> tornado.web.Application:
+def build_app(settings: Settings | None = None) -> tornado.web.Application:
+    settings = settings or load_settings()
     return tornado.web.Application(
         [
             (r"/healthz", HealthHandler),
+            (r"/server-info", ServerInfoHandler, {"settings": settings}),
         ]
     )

@@ -16,3 +16,6 @@ server/.coverage
 *.swp
 *.orig
 .superpowers/
+.venv/
+__pycache__/
+*.pyc
