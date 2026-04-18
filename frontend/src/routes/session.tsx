@@ -1,5 +1,6 @@
 import { useParams } from "@solidjs/router";
 
+import { ApprovalCard } from "../components/approval-card";
 import { PromptBox } from "../components/prompt-box";
 import { SessionActions } from "../components/session-actions";
 import { Timeline } from "../components/timeline";
@@ -29,6 +30,14 @@ function describeTimelineEvent(event: TimelineEvent): string {
       return "Prompt sent";
     case "session.bound":
       return "Session attached";
+    case "codex.approval.requested":
+      return String(
+        (event.payload.pendingApproval as { summary?: string } | undefined)?.summary ?? "Codex requested approval"
+      );
+    case "codex.approval.resolved":
+      return "Approval resolved";
+    case "codex.request.unsupported":
+      return `Unsupported Codex request: ${String(event.payload.method ?? "unknown")}`;
     case "acp.thought":
       return String(event.payload.text ?? "Agent thought");
     default:
@@ -61,6 +70,13 @@ export function SessionRoute(props: {
         rawMode={state.rawMode()}
         onToggleMode={() => state.setRawMode((current) => !current)}
       />
+      {state.detail()?.pendingApproval ? (
+        <ApprovalCard
+          approval={state.detail()!.pendingApproval!}
+          onApprove={() => void state.approvePending()}
+          onDeny={() => void state.denyPending()}
+        />
+      ) : null}
       <SessionActions
         disabled={state.actionsDisabled()}
         onResume={() => void state.resume()}

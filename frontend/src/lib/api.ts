@@ -6,6 +6,17 @@ export type SessionSummary = {
   workspaceState: string;
 };
 
+export type PendingApproval = {
+  kind: "command" | "file_change" | "permissions";
+  summary: string;
+  reason?: string;
+  command?: string[];
+  cwd?: string;
+  grantRoot?: string;
+  permissions?: Record<string, unknown>;
+  networkApprovalContext?: Record<string, unknown>;
+};
+
 export type SessionDetail = SessionSummary & {
   launcher?: string;
   repoPath?: string;
@@ -13,6 +24,7 @@ export type SessionDetail = SessionSummary & {
   activeNotificationKind?: string;
   lastActivityAt?: string;
   lastSeenEventSeq?: number;
+  pendingApproval?: PendingApproval;
 };
 
 export type TimelineEvent = {
@@ -44,6 +56,8 @@ type SessionApiRecord = {
   last_activity_at?: string;
   lastSeenEventSeq?: number;
   last_seen_event_seq?: number;
+  pendingApproval?: PendingApproval;
+  pending_approval?: PendingApproval;
 };
 
 function deriveTitle(session: SessionApiRecord): string {
@@ -75,7 +89,8 @@ function normalizeSession(session: SessionApiRecord): SessionDetail {
     worktreePath: session.worktreePath ?? session.worktree_path,
     activeNotificationKind: session.activeNotificationKind ?? session.active_notification_kind,
     lastActivityAt: session.lastActivityAt ?? session.last_activity_at,
-    lastSeenEventSeq: session.lastSeenEventSeq ?? session.last_seen_event_seq
+    lastSeenEventSeq: session.lastSeenEventSeq ?? session.last_seen_event_seq,
+    pendingApproval: session.pendingApproval ?? session.pending_approval
   };
 }
 
@@ -165,6 +180,14 @@ export async function resetSession(sessionId: string): Promise<SessionDetail> {
 
 export async function archiveSession(sessionId: string): Promise<SessionDetail> {
   return normalizeSession(await postJson<SessionApiRecord>(`/sessions/${sessionId}/archive`));
+}
+
+export async function approveSessionApproval(sessionId: string): Promise<SessionDetail> {
+  return normalizeSession(await postJson<SessionApiRecord>(`/sessions/${sessionId}/approval/approve`));
+}
+
+export async function denySessionApproval(sessionId: string): Promise<SessionDetail> {
+  return normalizeSession(await postJson<SessionApiRecord>(`/sessions/${sessionId}/approval/deny`));
 }
 
 export async function markSessionSeen(sessionId: string, lastSeenEventSeq: number): Promise<void> {

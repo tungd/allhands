@@ -44,3 +44,38 @@ test("renders timeline first, action strip, and disabled prompt hint", () => {
   expect(screen.getByRole("button", { name: "Resume" })).toBeTruthy();
   expect(screen.getByText("Resume session to send a prompt")).toBeTruthy();
 });
+
+
+test("renders codex approval card and action buttons", () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({})
+    })
+  );
+  vi.stubGlobal("EventSource", FakeEventSource);
+
+  render(() => (
+    <SessionRoute
+      sessionId="session-1"
+      initialDetail={{
+        id: "session-1",
+        title: "API Refactor",
+        runState: "attention_required",
+        workspaceState: "ready",
+        pendingApproval: {
+          kind: "command",
+          summary: "Run npm test",
+          command: ["npm", "test"],
+          cwd: "/tmp/projects/api/.worktrees/session-1"
+        }
+      }}
+      initialTimeline={[]}
+    />
+  ));
+
+  expect(screen.getByText("Run npm test")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Deny" })).toBeTruthy();
+});

@@ -23,6 +23,13 @@ function sortSessions(sessions: SessionSummary[]) {
 }
 
 export function applyEvent(state: SessionState, event: SessionEvent): SessionState {
+  const payloadRunState =
+    typeof event.payload.runState === "string"
+      ? event.payload.runState
+      : typeof event.payload.status === "string"
+        ? event.payload.status
+        : null;
+
   const sessions = state.sessions.map((session) =>
     session.id === event.sessionId
       ? {
@@ -37,7 +44,7 @@ export function applyEvent(state: SessionState, event: SessionEvent): SessionSta
                   : event.type === "session.attention_required"
               ? "attention_required"
               : event.type === "session.completed"
-                ? "completed"
+                ? payloadRunState ?? "completed"
               : event.type === "session.archived"
                   ? "archived"
                   : session.status,
@@ -51,7 +58,7 @@ export function applyEvent(state: SessionState, event: SessionEvent): SessionSta
                   : event.type === "session.attention_required"
               ? "attention_required"
               : event.type === "session.completed"
-                ? "completed"
+                ? payloadRunState ?? "completed"
                 : event.type === "session.archived"
                   ? "archived"
                   : session.runState

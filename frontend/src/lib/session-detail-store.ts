@@ -1,8 +1,10 @@
 import { createMemo, createSignal, onCleanup, onMount } from "solid-js";
 
 import {
+  approveSessionApproval,
   archiveSession,
   cancelSession,
+  denySessionApproval,
   getSession,
   listTimeline,
   markSessionSeen,
@@ -23,21 +25,56 @@ function applyEventToDetail(
     return detail;
   }
 
+  const payloadRunState =
+    typeof event.payload.runState === "string"
+      ? event.payload.runState
+      : typeof event.payload.status === "string"
+        ? event.payload.status
+        : null;
+  const pendingApproval = event.payload.pendingApproval as SessionDetail["pendingApproval"] | undefined;
+
   switch (event.type) {
     case "session.bound":
-      return { ...detail, status: "running", runState: "running", workspaceState: "ready" };
+      return {
+        ...detail,
+        status: "running",
+        runState: "running",
+        workspaceState: "ready",
+        pendingApproval: undefined
+      };
     case "session.cancelled":
-      return { ...detail, status: "resume_available", runState: "resume_available" };
+      return {
+        ...detail,
+        status: "resume_available",
+        runState: "resume_available",
+        pendingApproval: undefined
+      };
     case "session.attention_required":
-      return { ...detail, status: "attention_required", runState: "attention_required" };
+      return {
+        ...detail,
+        status: "attention_required",
+        runState: "attention_required",
+        pendingApproval: pendingApproval ?? detail.pendingApproval
+      };
     case "session.completed":
-      return { ...detail, status: "completed", runState: "completed" };
+      return {
+        ...detail,
+        status: payloadRunState ?? "completed",
+        runState: payloadRunState ?? "completed",
+        pendingApproval: undefined
+      };
     case "session.archived":
-      return { ...detail, status: "archived", runState: "archived" };
+      return { ...detail, status: "archived", runState: "archived", pendingApproval: undefined };
     case "session.failed":
-      return { ...detail, status: "failed", runState: "failed" };
+      return { ...detail, status: "failed", runState: "failed", pendingApproval: undefined };
     case "workspace.reset":
-      return { ...detail, status: "resume_available", runState: "resume_available", workspaceState: "missing" };
+      return {
+        ...detail,
+        status: "resume_available",
+        runState: "resume_available",
+        workspaceState: "missing",
+        pendingApproval: undefined
+      };
     case "workspace.recreated":
       return { ...detail, workspaceState: "ready" };
     default:
@@ -129,6 +166,12 @@ export function createSessionDetailState(
     },
     archive: async () => {
       setDetail(await archiveSession(sessionId));
+    },
+    approvePending: async () => {
+      setDetail(await approveSessionApproval(sessionId));
+    },
+    denyPending: async () => {
+      setDetail(await denySessionApproval(sessionId));
     }
   };
 }
