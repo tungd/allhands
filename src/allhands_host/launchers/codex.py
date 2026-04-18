@@ -13,7 +13,7 @@ class CodexLauncher(Launcher):
         prompt: str,
     ) -> LaunchCommand:
         return LaunchCommand(
-            argv=["codex", "--experimental-acp", "--prompt", prompt],
+            argv=["codex", "--experimental-acp"],
             cwd=worktree_path,
         )
 

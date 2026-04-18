@@ -2,7 +2,7 @@ import asyncio
 import contextlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, TypeVar
 
 import acp
 
@@ -12,6 +12,10 @@ from allhands_host.store import SessionStore
 
 class AttentionRequiredError(RuntimeError):
     pass
+
+
+ACP_STARTUP_TIMEOUT_SECONDS = 10.0
+_T = TypeVar("_T")
 
 
 class RecordingClient:
@@ -118,6 +122,59 @@ class Attachment:
             await self.process.wait()
 
 
+async def _terminate_process(process: asyncio.subprocess.Process) -> None:
+    if process.returncode is not None:
+        return
+    process.terminate()
+    with contextlib.suppress(asyncio.TimeoutError, ProcessLookupError):
+        await asyncio.wait_for(process.wait(), timeout=2)
+        return
+    with contextlib.suppress(ProcessLookupError):
+        process.kill()
+    with contextlib.suppress(Exception):
+        await process.wait()
+
+
+async def _read_startup_stderr(process: asyncio.subprocess.Process) -> str:
+    if process.stderr is None:
+        return ""
+    output = await process.stderr.read()
+    return output.decode(errors="replace").strip()
+
+
+async def _await_startup_step(
+    process: asyncio.subprocess.Process,
+    step: Awaitable[_T],
+    *,
+    description: str,
+) -> _T:
+    step_task = asyncio.create_task(step)
+    exit_task = asyncio.create_task(process.wait())
+
+    try:
+        done, _ = await asyncio.wait(
+            {step_task, exit_task},
+            timeout=ACP_STARTUP_TIMEOUT_SECONDS,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if step_task in done:
+            return await step_task
+        if exit_task in done:
+            stderr = await _read_startup_stderr(process)
+            detail = stderr or f"agent process exited with code {process.returncode}"
+            raise RuntimeError(f"Agent failed before ACP {description}: {detail}")
+        raise RuntimeError(f"Agent did not complete ACP {description} within {ACP_STARTUP_TIMEOUT_SECONDS:.0f}s.")
+    finally:
+        if not step_task.done():
+            step_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await step_task
+        if not exit_task.done():
+            exit_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await exit_task
+
+
 async def attach_and_initialize(
     session: SessionRecord,
     store: SessionStore,
@@ -137,9 +194,21 @@ async def attach_and_initialize(
     client = RecordingClient(session=session, store=store)
     connection = acp.connect_to_agent(client, process.stdin, process.stdout)
     store.append_event(session.id, "session.attached", {})
-    await connection.initialize(protocol_version=acp.PROTOCOL_VERSION)
-    store.append_event(session.id, "acp.initialized", {})
-    new_session = await connection.new_session(cwd=str(cwd))
+    try:
+        await _await_startup_step(
+            process,
+            connection.initialize(protocol_version=acp.PROTOCOL_VERSION),
+            description="initialization",
+        )
+        store.append_event(session.id, "acp.initialized", {})
+        new_session = await _await_startup_step(
+            process,
+            connection.new_session(cwd=str(cwd)),
+            description="session startup",
+        )
+    except Exception:
+        await _terminate_process(process)
+        raise
 
     return Attachment(
         session=session,
@@ -171,9 +240,21 @@ async def attach_and_resume(
     client = RecordingClient(session=session, store=store)
     connection = acp.connect_to_agent(client, process.stdin, process.stdout)
     store.append_event(session.id, "session.attached", {"mode": "resume"})
-    await connection.initialize(protocol_version=acp.PROTOCOL_VERSION)
-    store.append_event(session.id, "acp.initialized", {"mode": "resume"})
-    await connection.resume_session(cwd=str(cwd), session_id=session_token)
+    try:
+        await _await_startup_step(
+            process,
+            connection.initialize(protocol_version=acp.PROTOCOL_VERSION),
+            description="initialization",
+        )
+        store.append_event(session.id, "acp.initialized", {"mode": "resume"})
+        await _await_startup_step(
+            process,
+            connection.resume_session(cwd=str(cwd), session_id=session_token),
+            description="session resume",
+        )
+    except Exception:
+        await _terminate_process(process)
+        raise
 
     return Attachment(
         session=session,

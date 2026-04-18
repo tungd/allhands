@@ -13,7 +13,7 @@ class PiLauncher(Launcher):
         prompt: str,
     ) -> LaunchCommand:
         return LaunchCommand(
-            argv=["pi", "--experimental-acp", "--prompt", prompt],
+            argv=["pi", "--experimental-acp"],
             cwd=worktree_path,
         )
 

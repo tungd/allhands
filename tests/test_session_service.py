@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -13,7 +14,23 @@ from allhands_host.store import SessionStore
 
 class FakeLauncher:
     def __init__(self):
+        self.start_commands: list[dict[str, object]] = []
         self.resume_tokens: list[str] = []
+
+    def build_start_command(self, repo_path: Path, worktree_path: Path, prompt: str) -> LaunchCommand:
+        command = LaunchCommand(
+            argv=["fake-agent", "--prompt", prompt],
+            cwd=worktree_path,
+        )
+        self.start_commands.append(
+            {
+                "repo_path": repo_path,
+                "worktree_path": worktree_path,
+                "prompt": prompt,
+                "command": command,
+            }
+        )
+        return command
 
     def build_resume_command(self, session_token: str) -> LaunchCommand:
         self.resume_tokens.append(session_token)
@@ -126,6 +143,23 @@ def create_session(store: SessionStore, tmp_path: Path) -> SessionRecord:
     )
     store.create_session(session)
     return session
+
+
+async def wait_for_session_status(
+    store: SessionStore,
+    session_id: str,
+    status: str,
+    *,
+    timeout: float = 1.0,
+) -> SessionRecord:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        session = store.get_session(session_id)
+        if session.status == status:
+            return session
+        if asyncio.get_running_loop().time() >= deadline:
+            raise AssertionError(f"timed out waiting for session {session_id} to reach {status!r}")
+        await asyncio.sleep(0.01)
 
 
 @pytest.mark.asyncio
@@ -335,3 +369,87 @@ async def test_reset_stops_live_run_and_marks_workspace_missing(tmp_path: Path):
     assert reset.workspace_state == "missing"
     assert reset.status == "resume_available"
     assert worktrees.removed == [Path(session.worktree_path)]
+
+
+@pytest.mark.asyncio
+async def test_create_session_returns_before_bootstrap_finishes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    db = Database(tmp_path / "allhands.sqlite3")
+    db.migrate()
+    store = SessionStore(db)
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    worktrees = FakeWorktrees(tmp_path)
+    launcher = FakeLauncher()
+    service = SessionService(
+        settings=make_settings(tmp_path, db.path),
+        store=store,
+        worktree_manager=worktrees,
+        launcher_catalog=FakeLauncherCatalog(launcher),
+    )
+
+    attach_started = asyncio.Event()
+    release_attach = asyncio.Event()
+
+    async def fake_attach_and_initialize(*, session, store, argv, cwd):
+        attach_started.set()
+        await release_attach.wait()
+        return FakeAttachment(agent_session_id="agent-123")
+
+    monkeypatch.setattr("allhands_host.session_service.attach_and_initialize", fake_attach_and_initialize)
+
+    create_task = asyncio.create_task(service.create_session("codex", str(repo_path), "Ship it"))
+    await attach_started.wait()
+    await asyncio.sleep(0)
+
+    assert create_task.done() is True
+    created = create_task.result()
+    assert created.status == "created"
+    assert created.worktree_path == str(repo_path.parent / ".worktrees" / created.id)
+
+    release_attach.set()
+    completed = await wait_for_session_status(store, created.id, "completed")
+
+    assert completed.last_bound_agent_session_id == "agent-123"
+    assert launcher.start_commands == [
+        {
+            "repo_path": repo_path,
+            "worktree_path": repo_path.parent / ".worktrees" / created.id,
+            "prompt": "Ship it",
+            "command": LaunchCommand(
+                argv=["fake-agent", "--prompt", "Ship it"],
+                cwd=repo_path.parent / ".worktrees" / created.id,
+            ),
+        }
+    ]
+    assert worktrees.created == [(repo_path, created.id)]
+
+
+@pytest.mark.asyncio
+async def test_create_session_marks_bootstrap_failures_on_the_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    db = Database(tmp_path / "allhands.sqlite3")
+    db.migrate()
+    store = SessionStore(db)
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    worktrees = FakeWorktrees(tmp_path)
+    launcher = FakeLauncher()
+    service = SessionService(
+        settings=make_settings(tmp_path, db.path),
+        store=store,
+        worktree_manager=worktrees,
+        launcher_catalog=FakeLauncherCatalog(launcher),
+    )
+
+    async def fake_attach_and_initialize(*, session, store, argv, cwd):
+        raise RuntimeError("error: unexpected argument '--experimental-acp' found")
+
+    monkeypatch.setattr("allhands_host.session_service.attach_and_initialize", fake_attach_and_initialize)
+
+    created = await service.create_session("codex", str(repo_path), "Ship it")
+    failed = await wait_for_session_status(store, created.id, "failed")
+    events = store.list_events(created.id, after_seq=0)
+
+    assert created.status == "created"
+    assert failed.status == "failed"
+    assert [event.type for event in events] == ["session.created", "session.failed"]
+    assert events[-1].payload == {"error": "error: unexpected argument '--experimental-acp' found"}
