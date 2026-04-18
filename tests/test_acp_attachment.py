@@ -27,7 +27,19 @@ async def test_attachment_records_initialize_and_prompt_events(tmp_path: Path):
     )
     await attachment.prompt("hello")
 
-    events = store.list_events(session.id, after_seq=0)
+    deadline = asyncio.get_running_loop().time() + 1.0
+    while True:
+        events = store.list_events(session.id, after_seq=0)
+        if [event.type for event in events] == [
+            "session.attached",
+            "acp.initialized",
+            "acp.thought",
+        ]:
+            break
+        if asyncio.get_running_loop().time() >= deadline:
+            break
+        await asyncio.sleep(0.01)
+
     assert [event.type for event in events] == [
         "session.attached",
         "acp.initialized",

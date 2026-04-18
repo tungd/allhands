@@ -19,6 +19,8 @@ async def test_serve_binds_to_configured_host_and_port(monkeypatch):
         port=43123,
         vapid_public_key="pub",
         vapid_private_key="priv",
+        codex_app_server_port=21992,
+        codex_binary="codex",
     )
     app = Mock()
     stop_event = asyncio.Event()
@@ -40,6 +42,8 @@ async def test_serve_logs_listening_address(monkeypatch):
         port=21991,
         vapid_public_key="pub",
         vapid_private_key="priv",
+        codex_app_server_port=21992,
+        codex_binary="codex",
     )
     app = Mock()
     stop_event = asyncio.Event()

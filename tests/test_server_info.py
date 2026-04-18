@@ -16,6 +16,8 @@ class ServerInfoHandlerTest(AsyncHTTPTestCase):
             port=21991,
             vapid_public_key="pub",
             vapid_private_key="priv",
+            codex_app_server_port=21992,
+            codex_binary="codex",
         )
         return build_app(settings=settings)
 
