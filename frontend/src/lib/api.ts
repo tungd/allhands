@@ -22,6 +22,11 @@ export type TimelineEvent = {
   createdAt: string;
 };
 
+export type RepoSummary = {
+  name: string;
+  path: string;
+};
+
 type SessionApiRecord = {
   id: string;
   title?: string;
@@ -97,6 +102,14 @@ export async function listSessions(): Promise<{ sessions: SessionSummary[] }> {
   };
 }
 
+export async function listRepos(query = ""): Promise<{ repos: RepoSummary[] }> {
+  const response = await fetch(`/repos?query=${encodeURIComponent(query)}`);
+  if (!response.ok) {
+    throw new Error("failed to load repos");
+  }
+  return (await response.json()) as { repos: RepoSummary[] };
+}
+
 export async function getSession(sessionId: string): Promise<SessionDetail> {
   const response = await fetch(`/sessions/${sessionId}`);
   if (!response.ok) {
@@ -122,6 +135,20 @@ export async function sendPrompt(sessionId: string, prompt: string): Promise<voi
   if (!response.ok) {
     throw new Error("failed to send prompt");
   }
+}
+
+export async function createSession(
+  launcher: string,
+  repoPath: string,
+  prompt: string
+): Promise<SessionDetail> {
+  return normalizeSession(
+    await postJson<SessionApiRecord>("/sessions", {
+      launcher,
+      repoPath,
+      prompt
+    })
+  );
 }
 
 export async function resumeSession(sessionId: string): Promise<SessionDetail> {
