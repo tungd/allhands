@@ -5,7 +5,7 @@ from pathlib import Path
 
 from allhands_host.acp_attachment import AttentionRequiredError, Attachment, attach_and_initialize, attach_and_resume
 from allhands_host.codex_daemon import CodexDaemonManager
-from allhands_host.codex_session_adapter import CodexSessionAdapter
+from allhands_host.codex_session_adapter import CodexSessionAdapter, NoPendingApprovalError
 from allhands_host.config import Settings
 from allhands_host.db import Database
 from allhands_host.launchers.catalog import LauncherCatalog
@@ -61,7 +61,17 @@ class SessionService:
         return [asdict(session) for session in self.store.list_sessions()]
 
     def get_session(self, session_id: str) -> dict:
-        return asdict(self.store.get_session(session_id))
+        session = self.store.get_session(session_id)
+        payload = asdict(session)
+        if session.launcher != "codex":
+            return payload
+        try:
+            codex = self.store.get_codex_session(session_id)
+        except KeyError:
+            return payload
+        if codex.pending_request_payload is not None:
+            payload["pending_approval"] = codex.pending_request_payload
+        return payload
 
     def list_events(self, session_id: str, after_seq: int):
         return self.store.list_events(session_id, after_seq)
@@ -194,7 +204,22 @@ class SessionService:
             active_notification_kind="none",
         )
 
-    def archive(self, session_id: str) -> SessionRecord:
+    async def approve_pending_request(self, session_id: str) -> SessionRecord:
+        session = self.store.get_session(session_id)
+        if session.launcher != "codex":
+            raise NoPendingApprovalError("No live pending Codex approval")
+        return await self.codex_adapter.approve_pending_request(session)
+
+    async def deny_pending_request(self, session_id: str) -> SessionRecord:
+        session = self.store.get_session(session_id)
+        if session.launcher != "codex":
+            raise NoPendingApprovalError("No live pending Codex approval")
+        return await self.codex_adapter.deny_pending_request(session)
+
+    async def archive(self, session_id: str) -> SessionRecord:
+        session = self.store.get_session(session_id)
+        if session.launcher == "codex":
+            return await self.codex_adapter.archive(session)
         self.attachments.pop(session_id, None)
         self.store.append_event(session_id, "session.archived", {})
         return self.store.update_session_projection(

@@ -72,6 +72,11 @@ class CodexAppServerClient:
             raise RuntimeError("codex client is not connected")
         await self._ws.write_message(json.dumps({"method": method, "params": params or {}}))
 
+    async def respond(self, request_id: object, result: dict | None = None) -> None:
+        if self._ws is None:
+            raise RuntimeError("codex client is not connected")
+        await self._ws.write_message(json.dumps({"id": request_id, "result": result or {}}))
+
     async def thread_start(self, cwd: str) -> dict:
         payload = await self.request("thread/start", {"cwd": cwd})
         return payload["thread"]

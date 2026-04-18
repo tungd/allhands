@@ -42,6 +42,7 @@ class FakeClient:
         self.turn_start_calls: list[dict[str, object]] = []
         self.turn_interrupt_calls: list[tuple[str, str]] = []
         self.thread_archive_calls: list[str] = []
+        self.respond_calls: list[tuple[object, dict]] = []
 
     async def connect(self) -> None:
         self.connected = True
@@ -66,6 +67,9 @@ class FakeClient:
 
     async def thread_archive(self, thread_id: str) -> None:
         self.thread_archive_calls.append(thread_id)
+
+    async def respond(self, request_id: object, result: dict) -> None:
+        self.respond_calls.append((request_id, result))
 
 
 def create_session(store: SessionStore, tmp_path: Path, *, launcher: str = "codex") -> SessionRecord:
@@ -148,3 +152,92 @@ async def test_resume_uses_stored_thread_id(tmp_path: Path):
     assert resumed.workspace_state == "ready"
     assert client.thread_resume_calls == ["thr_123"]
     assert worktrees.created == [(Path(session.repo_path), session.id)]
+
+
+@pytest.mark.asyncio
+async def test_approval_request_moves_session_to_attention_required(tmp_path: Path):
+    module = load_codex_session_adapter_module()
+    db = Database(tmp_path / "allhands.sqlite3")
+    db.migrate()
+    store = SessionStore(db)
+    session = create_session(store, tmp_path)
+    client = FakeClient()
+
+    async def client_factory(_handle):
+        return client
+
+    adapter = module.CodexSessionAdapter(
+        store=store,
+        worktree_manager=FakeWorktreeManager(),
+        daemon_manager=FakeDaemonManager(),
+        client_factory=client_factory,
+    )
+
+    await adapter.bootstrap(session, "Fix the API")
+    await adapter._handle_message(
+        session.id,
+        {
+            "id": 61,
+            "method": "item/commandExecution/requestApproval",
+            "params": {
+                "threadId": "thr_123",
+                "turnId": "turn_123",
+                "itemId": "call_123",
+                "reason": "Run the test suite",
+                "command": ["npm", "test"],
+                "cwd": session.worktree_path,
+            },
+        },
+    )
+
+    refreshed = store.get_session(session.id)
+    codex = store.get_codex_session(session.id)
+    events = store.list_events(session.id, after_seq=0)
+
+    assert refreshed.status == "attention_required"
+    assert codex.pending_request_id == "61"
+    assert codex.pending_request_kind == "command"
+    assert codex.pending_request_payload == {
+        "kind": "command",
+        "summary": "Run npm test",
+        "reason": "Run the test suite",
+        "command": ["npm", "test"],
+        "cwd": session.worktree_path,
+    }
+    assert [event.type for event in events][-2:] == ["codex.approval.requested", "session.attention_required"]
+
+    approved = await adapter.approve_pending_request(session)
+    updated = store.get_codex_session(session.id)
+
+    assert approved.status == "running"
+    assert updated.pending_request_id is None
+    assert updated.pending_request_kind is None
+    assert updated.pending_request_payload is None
+    assert client.respond_calls == [(61, {"decision": "accept"})]
+
+
+@pytest.mark.asyncio
+async def test_archive_calls_remote_thread_archive(tmp_path: Path):
+    module = load_codex_session_adapter_module()
+    db = Database(tmp_path / "allhands.sqlite3")
+    db.migrate()
+    store = SessionStore(db)
+    session = create_session(store, tmp_path)
+    client = FakeClient()
+
+    async def client_factory(_handle):
+        return client
+
+    adapter = module.CodexSessionAdapter(
+        store=store,
+        worktree_manager=FakeWorktreeManager(),
+        daemon_manager=FakeDaemonManager(),
+        client_factory=client_factory,
+    )
+
+    await adapter.bootstrap(session, "Fix the API")
+    archived = await adapter.archive(session)
+
+    assert archived.status == "archived"
+    assert client.thread_archive_calls == ["thr_123"]
+    assert client.closed is True

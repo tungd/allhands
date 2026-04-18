@@ -9,12 +9,19 @@ from allhands_host.config import Settings
 
 
 class FakeSession:
-    def __init__(self, session_id: str, status: str, workspace_state: str = "ready"):
+    def __init__(
+        self,
+        session_id: str,
+        status: str,
+        workspace_state: str = "ready",
+        pending_approval: dict | None = None,
+    ):
         self.id = session_id
         self.status = status
         self.workspace_state = workspace_state
         self.repo_path = "/tmp/projects/api"
         self.launcher = "codex"
+        self.pending_approval = pending_approval
 
 
 class FakeEvent:
@@ -51,6 +58,8 @@ class FakeSessionService:
     def __init__(self):
         self.app_seen = []
         self.session_seen = []
+        self.pending_approval = None
+        self.approval_actions = []
 
     async def create_session(self, launcher: str, repo_path: str, prompt: str):
         return FakeSession("session_123", "created")
@@ -67,17 +76,28 @@ class FakeSessionService:
     async def reset(self, session_id: str):
         return FakeSession(session_id, "resume_available", workspace_state="missing")
 
-    def archive(self, session_id: str):
+    async def archive(self, session_id: str):
         return FakeSession(session_id, "archived")
 
+    async def approve_pending_request(self, session_id: str):
+        self.approval_actions.append({"sessionId": session_id, "decision": "approve"})
+        return FakeSession(session_id, "running")
+
+    async def deny_pending_request(self, session_id: str):
+        self.approval_actions.append({"sessionId": session_id, "decision": "deny"})
+        return FakeSession(session_id, "running")
+
     def get_session(self, session_id: str):
-        return {
+        payload = {
             "id": session_id,
             "status": "completed",
             "workspace_state": "ready",
             "repo_path": "/tmp/projects/api",
             "launcher": "codex",
         }
+        if self.pending_approval is not None:
+            payload["pending_approval"] = self.pending_approval
+        return payload
 
     def list_sessions(self):
         return [
@@ -112,6 +132,8 @@ class SessionApiTest(AsyncHTTPTestCase):
             port=21991,
             vapid_public_key="pub",
             vapid_private_key="priv",
+            codex_app_server_port=21992,
+            codex_binary="codex",
         )
         return build_app(
             settings=settings,
@@ -160,6 +182,30 @@ class SessionApiTest(AsyncHTTPTestCase):
         assert response.code == 200
         assert payload["workspaceState"] == "missing"
         assert payload["runState"] == "resume_available"
+
+    def test_session_detail_includes_pending_approval(self):
+        self.session_service.pending_approval = {
+            "kind": "command",
+            "summary": "Run npm test",
+            "reason": "Validate the workspace",
+            "command": ["npm", "test"],
+            "cwd": "/tmp/projects/api/.worktrees/session_123",
+        }
+
+        response = self.fetch("/sessions/session_123")
+        payload = json.loads(response.body)
+
+        assert response.code == 200
+        assert payload["pendingApproval"]["kind"] == "command"
+        assert payload["pendingApproval"]["command"] == ["npm", "test"]
+
+    def test_approve_endpoint_resolves_pending_approval(self):
+        response = self.fetch("/sessions/session_123/approval/approve", method="POST", body="{}")
+        payload = json.loads(response.body)
+
+        assert response.code == 200
+        assert payload["runState"] == "running"
+        assert self.session_service.approval_actions == [{"sessionId": "session_123", "decision": "approve"}]
 
     def test_seen_endpoints_accept_app_and_session_cursors(self):
         app_seen = self.fetch(
@@ -229,6 +275,8 @@ class FrontendShellTest(AsyncHTTPTestCase):
             port=21991,
             vapid_public_key="pub",
             vapid_private_key="priv",
+            codex_app_server_port=21992,
+            codex_binary="codex",
         )
         return build_app(
             settings=settings,

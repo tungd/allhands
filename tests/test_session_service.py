@@ -129,6 +129,9 @@ class FakeCodexAdapter:
     def __init__(self):
         self.bootstrapped: list[tuple[str, str]] = []
         self.resumed: list[str] = []
+        self.approved: list[str] = []
+        self.denied: list[str] = []
+        self.archived: list[str] = []
 
     async def bootstrap(self, session: SessionRecord, prompt: str) -> None:
         self.bootstrapped.append((session.id, prompt))
@@ -136,6 +139,18 @@ class FakeCodexAdapter:
     async def resume(self, session: SessionRecord) -> SessionRecord:
         self.resumed.append(session.id)
         return replace(session, status="running", workspace_state="ready")
+
+    async def approve_pending_request(self, session: SessionRecord) -> SessionRecord:
+        self.approved.append(session.id)
+        return replace(session, status="running", workspace_state="ready")
+
+    async def deny_pending_request(self, session: SessionRecord) -> SessionRecord:
+        self.denied.append(session.id)
+        return replace(session, status="running", workspace_state="ready")
+
+    async def archive(self, session: SessionRecord) -> SessionRecord:
+        self.archived.append(session.id)
+        return replace(session, status="archived", workspace_state=session.workspace_state)
 
 
 def make_settings(tmp_path: Path, db_path: Path) -> Settings:
@@ -507,3 +522,69 @@ async def test_codex_resume_delegates_to_codex_adapter(tmp_path: Path):
 
     assert resumed.status == "running"
     assert codex_adapter.resumed == [session.id]
+
+
+@pytest.mark.asyncio
+async def test_codex_approve_pending_request_delegates_to_codex_adapter(tmp_path: Path):
+    db = Database(tmp_path / "allhands.sqlite3")
+    db.migrate()
+    store = SessionStore(db)
+    session = create_session(store, tmp_path, launcher="codex")
+    store.upsert_codex_session(
+        CodexSessionRecord(
+            session_id=session.id,
+            thread_id="thr_123",
+            active_turn_id="turn_123",
+            pending_request_id="61",
+            pending_request_kind="command",
+            pending_request_payload={"kind": "command", "summary": "Run npm test"},
+            created_at=session.created_at,
+            updated_at=session.updated_at,
+        )
+    )
+
+    codex_adapter = FakeCodexAdapter()
+    service = SessionService(
+        settings=make_settings(tmp_path, db.path),
+        store=store,
+        launcher_catalog=FakeLauncherCatalog(FakeLauncher()),
+        codex_adapter=codex_adapter,
+    )
+
+    approved = await service.approve_pending_request(session.id)
+
+    assert approved.status == "running"
+    assert codex_adapter.approved == [session.id]
+
+
+@pytest.mark.asyncio
+async def test_codex_archive_delegates_to_codex_adapter(tmp_path: Path):
+    db = Database(tmp_path / "allhands.sqlite3")
+    db.migrate()
+    store = SessionStore(db)
+    session = create_session(store, tmp_path, launcher="codex")
+    store.upsert_codex_session(
+        CodexSessionRecord(
+            session_id=session.id,
+            thread_id="thr_123",
+            active_turn_id=None,
+            pending_request_id=None,
+            pending_request_kind=None,
+            pending_request_payload=None,
+            created_at=session.created_at,
+            updated_at=session.updated_at,
+        )
+    )
+
+    codex_adapter = FakeCodexAdapter()
+    service = SessionService(
+        settings=make_settings(tmp_path, db.path),
+        store=store,
+        launcher_catalog=FakeLauncherCatalog(FakeLauncher()),
+        codex_adapter=codex_adapter,
+    )
+
+    archived = await service.archive(session.id)
+
+    assert archived.status == "archived"
+    assert codex_adapter.archived == [session.id]

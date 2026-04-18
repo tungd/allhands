@@ -6,6 +6,7 @@ import tornado.iostream
 import tornado.web
 
 from allhands_host.config import Settings
+from allhands_host.codex_session_adapter import NoPendingApprovalError
 from allhands_host.launchers.catalog import available_launchers
 
 
@@ -26,6 +27,7 @@ def serialize_session(session: object) -> dict:
     for key, alias in (
         ("repo_path", "repoPath"),
         ("worktree_path", "worktreePath"),
+        ("pending_approval", "pendingApproval"),
         ("last_bound_agent_session_id", "lastBoundAgentSessionId"),
         ("last_activity_at", "lastActivityAt"),
         ("last_notified_at", "lastNotifiedAt"),
@@ -162,8 +164,32 @@ class SessionArchiveHandler(tornado.web.RequestHandler):
     def initialize(self, session_service) -> None:
         self.session_service = session_service
 
-    def post(self, session_id: str) -> None:
-        session = self.session_service.archive(session_id)
+    async def post(self, session_id: str) -> None:
+        session = await self.session_service.archive(session_id)
+        self.finish(serialize_session(session))
+
+
+class SessionApprovalApproveHandler(tornado.web.RequestHandler):
+    def initialize(self, session_service) -> None:
+        self.session_service = session_service
+
+    async def post(self, session_id: str) -> None:
+        try:
+            session = await self.session_service.approve_pending_request(session_id)
+        except NoPendingApprovalError as exc:
+            raise tornado.web.HTTPError(409, reason=str(exc)) from exc
+        self.finish(serialize_session(session))
+
+
+class SessionApprovalDenyHandler(tornado.web.RequestHandler):
+    def initialize(self, session_service) -> None:
+        self.session_service = session_service
+
+    async def post(self, session_id: str) -> None:
+        try:
+            session = await self.session_service.deny_pending_request(session_id)
+        except NoPendingApprovalError as exc:
+            raise tornado.web.HTTPError(409, reason=str(exc)) from exc
         self.finish(serialize_session(session))
 
 
