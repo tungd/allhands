@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -7,7 +8,7 @@ from allhands_host.acp_attachment import AttentionRequiredError
 from allhands_host.config import Settings
 from allhands_host.db import Database
 from allhands_host.launchers.base import LaunchCommand
-from allhands_host.models import SessionRecord
+from allhands_host.models import CodexSessionRecord, SessionRecord
 from allhands_host.session_service import SessionService
 from allhands_host.store import SessionStore
 
@@ -124,6 +125,19 @@ class FakeNotificationService:
         )
 
 
+class FakeCodexAdapter:
+    def __init__(self):
+        self.bootstrapped: list[tuple[str, str]] = []
+        self.resumed: list[str] = []
+
+    async def bootstrap(self, session: SessionRecord, prompt: str) -> None:
+        self.bootstrapped.append((session.id, prompt))
+
+    async def resume(self, session: SessionRecord) -> SessionRecord:
+        self.resumed.append(session.id)
+        return replace(session, status="running", workspace_state="ready")
+
+
 def make_settings(tmp_path: Path, db_path: Path) -> Settings:
     return Settings(
         project_root=tmp_path,
@@ -132,12 +146,14 @@ def make_settings(tmp_path: Path, db_path: Path) -> Settings:
         port=21991,
         vapid_public_key="pub",
         vapid_private_key="priv",
+        codex_app_server_port=21992,
+        codex_binary="codex",
     )
 
 
-def create_session(store: SessionStore, tmp_path: Path) -> SessionRecord:
+def create_session(store: SessionStore, tmp_path: Path, *, launcher: str = "claude") -> SessionRecord:
     session = SessionRecord.new(
-        launcher="codex",
+        launcher=launcher,
         repo_path=str(tmp_path / "repo"),
         worktree_path=str(tmp_path / "repo/.worktrees/session_1"),
     )
@@ -397,7 +413,7 @@ async def test_create_session_returns_before_bootstrap_finishes(tmp_path: Path, 
 
     monkeypatch.setattr("allhands_host.session_service.attach_and_initialize", fake_attach_and_initialize)
 
-    create_task = asyncio.create_task(service.create_session("codex", str(repo_path), "Ship it"))
+    create_task = asyncio.create_task(service.create_session("claude", str(repo_path), "Ship it"))
     await attach_started.wait()
     await asyncio.sleep(0)
 
@@ -445,7 +461,7 @@ async def test_create_session_marks_bootstrap_failures_on_the_session(tmp_path: 
 
     monkeypatch.setattr("allhands_host.session_service.attach_and_initialize", fake_attach_and_initialize)
 
-    created = await service.create_session("codex", str(repo_path), "Ship it")
+    created = await service.create_session("claude", str(repo_path), "Ship it")
     failed = await wait_for_session_status(store, created.id, "failed")
     events = store.list_events(created.id, after_seq=0)
 
@@ -453,3 +469,41 @@ async def test_create_session_marks_bootstrap_failures_on_the_session(tmp_path: 
     assert failed.status == "failed"
     assert [event.type for event in events] == ["session.created", "session.failed"]
     assert events[-1].payload == {"error": "error: unexpected argument '--experimental-acp' found"}
+
+
+@pytest.mark.asyncio
+async def test_codex_resume_delegates_to_codex_adapter(tmp_path: Path):
+    db = Database(tmp_path / "allhands.sqlite3")
+    db.migrate()
+    store = SessionStore(db)
+    session = create_session(store, tmp_path, launcher="codex")
+    store.update_session_projection(
+        session.id,
+        status="resume_available",
+        workspace_state="ready",
+    )
+    store.upsert_codex_session(
+        CodexSessionRecord(
+            session_id=session.id,
+            thread_id="thr_123",
+            active_turn_id=None,
+            pending_request_id=None,
+            pending_request_kind=None,
+            pending_request_payload=None,
+            created_at=session.created_at,
+            updated_at=session.updated_at,
+        )
+    )
+
+    codex_adapter = FakeCodexAdapter()
+    service = SessionService(
+        settings=make_settings(tmp_path, db.path),
+        store=store,
+        launcher_catalog=FakeLauncherCatalog(FakeLauncher()),
+        codex_adapter=codex_adapter,
+    )
+
+    resumed = await service.resume(session.id)
+
+    assert resumed.status == "running"
+    assert codex_adapter.resumed == [session.id]

@@ -1,8 +1,9 @@
 from pathlib import Path
 
 from allhands_host.launchers.claude import ClaudeLauncher
-from allhands_host.launchers.codex import CodexLauncher
 from allhands_host.launchers.pi import PiLauncher
+
+AVAILABLE_LAUNCHERS = ["claude", "codex", "pi"]
 
 
 class LauncherCatalog:
@@ -10,7 +11,6 @@ class LauncherCatalog:
         self.project_root = project_root
         self._launchers = {
             "claude": ClaudeLauncher(),
-            "codex": CodexLauncher(),
             "pi": PiLauncher(),
         }
 
@@ -22,4 +22,4 @@ class LauncherCatalog:
 
 
 def available_launchers() -> list[str]:
-    return LauncherCatalog(project_root=Path.cwd()).slugs()
+    return AVAILABLE_LAUNCHERS.copy()
