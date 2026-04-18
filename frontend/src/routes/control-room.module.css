@@ -1,0 +1,41 @@
+.room {
+  position: relative;
+  display: grid;
+  gap: 16px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.newSession {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--panel);
+  border-radius: 999px;
+  padding: 10px 16px;
+  text-decoration: none;
+}
+
+.content {
+  display: grid;
+  gap: 16px;
+  transition: opacity 140ms ease;
+}
+
+.dimmed {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.empty {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  color: var(--muted);
+}
