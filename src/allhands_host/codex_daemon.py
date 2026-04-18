@@ -1,11 +1,9 @@
 import asyncio
 from dataclasses import dataclass
-from pathlib import Path
 import secrets
 
-import aiohttp
-
 from allhands_host.config import Settings
+from tornado.httpclient import AsyncHTTPClient, HTTPClientError, HTTPRequest
 
 
 @dataclass(frozen=True)
@@ -64,15 +62,17 @@ class CodexDaemonManager:
 
     async def _default_probe_ready(self) -> bool:
         base_url = self.endpoint.replace("ws://", "http://", 1)
-        timeout = aiohttp.ClientTimeout(total=0.5)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            for suffix in ("/readyz", "/healthz"):
-                try:
-                    async with session.get(f"{base_url}{suffix}") as response:
-                        if response.status == 200:
-                            return True
-                except aiohttp.ClientError:
-                    continue
+        client = AsyncHTTPClient()
+        for suffix in ("/readyz", "/healthz"):
+            try:
+                response = await client.fetch(
+                    HTTPRequest(f"{base_url}{suffix}", request_timeout=0.5),
+                    raise_error=False,
+                )
+                if response.code == 200:
+                    return True
+            except HTTPClientError:
+                continue
         return False
 
     async def _default_spawn_process(self, argv: list[str]):
