@@ -9,6 +9,46 @@ from allhands_host.config import Settings
 from allhands_host.launchers.catalog import available_launchers
 
 
+def serialize_session(session: object) -> dict:
+    if isinstance(session, dict):
+        raw = dict(session)
+    else:
+        raw = dict(vars(session))
+
+    status = raw.get("status")
+    workspace_state = raw.get("workspace_state", raw.get("workspaceState"))
+    payload = dict(raw)
+    if status is not None:
+        payload["runState"] = status
+    if workspace_state is not None:
+        payload["workspaceState"] = workspace_state
+        payload.setdefault("workspace_state", workspace_state)
+    for key, alias in (
+        ("repo_path", "repoPath"),
+        ("worktree_path", "worktreePath"),
+        ("last_bound_agent_session_id", "lastBoundAgentSessionId"),
+        ("last_activity_at", "lastActivityAt"),
+        ("last_notified_at", "lastNotifiedAt"),
+        ("active_notification_kind", "activeNotificationKind"),
+        ("last_seen_event_seq", "lastSeenEventSeq"),
+        ("created_at", "createdAt"),
+        ("updated_at", "updatedAt"),
+    ):
+        value = raw.get(key)
+        if value is not None:
+            payload[alias] = value
+    return payload
+
+
+def serialize_event(event: object) -> dict:
+    return {
+        "seq": event.seq,
+        "type": event.type,
+        "payload": event.payload,
+        "createdAt": event.created_at,
+    }
+
+
 class HealthHandler(tornado.web.RequestHandler):
     def get(self) -> None:
         self.set_header("Content-Type", "application/json")
@@ -35,7 +75,7 @@ class SessionsHandler(tornado.web.RequestHandler):
         self.session_service = session_service
 
     async def get(self) -> None:
-        self.finish({"sessions": self.session_service.list_sessions()})
+        self.finish({"sessions": [serialize_session(session) for session in self.session_service.list_sessions()]})
 
     async def post(self) -> None:
         payload = tornado.escape.json_decode(self.request.body or b"{}")
@@ -45,7 +85,7 @@ class SessionsHandler(tornado.web.RequestHandler):
             prompt=payload["prompt"],
         )
         self.set_status(201)
-        self.finish({"id": session.id, "status": session.status})
+        self.finish(serialize_session(session))
 
 
 class SessionDetailHandler(tornado.web.RequestHandler):
@@ -53,7 +93,16 @@ class SessionDetailHandler(tornado.web.RequestHandler):
         self.session_service = session_service
 
     def get(self, session_id: str) -> None:
-        self.finish(self.session_service.get_session(session_id))
+        self.finish(serialize_session(self.session_service.get_session(session_id)))
+
+
+class SessionTimelineHandler(tornado.web.RequestHandler):
+    def initialize(self, session_service) -> None:
+        self.session_service = session_service
+
+    def get(self, session_id: str) -> None:
+        events = self.session_service.list_events(session_id, after_seq=0)
+        self.finish({"events": [serialize_event(event) for event in events]})
 
 
 class SessionPromptHandler(tornado.web.RequestHandler):
@@ -72,7 +121,25 @@ class SessionResumeHandler(tornado.web.RequestHandler):
 
     async def post(self, session_id: str) -> None:
         session = await self.session_service.resume(session_id)
-        self.finish({"id": session.id, "status": session.status})
+        self.finish(serialize_session(session))
+
+
+class SessionCancelHandler(tornado.web.RequestHandler):
+    def initialize(self, session_service) -> None:
+        self.session_service = session_service
+
+    async def post(self, session_id: str) -> None:
+        session = await self.session_service.cancel(session_id)
+        self.finish(serialize_session(session))
+
+
+class SessionResetHandler(tornado.web.RequestHandler):
+    def initialize(self, session_service) -> None:
+        self.session_service = session_service
+
+    async def post(self, session_id: str) -> None:
+        session = await self.session_service.reset(session_id)
+        self.finish(serialize_session(session))
 
 
 class SessionArchiveHandler(tornado.web.RequestHandler):
@@ -81,7 +148,7 @@ class SessionArchiveHandler(tornado.web.RequestHandler):
 
     def post(self, session_id: str) -> None:
         session = self.session_service.archive(session_id)
-        self.finish({"id": session.id, "status": session.status})
+        self.finish(serialize_session(session))
 
 
 class SessionEventsHandler(tornado.web.RequestHandler):
@@ -122,6 +189,26 @@ class PushSubscriptionHandler(tornado.web.RequestHandler):
             endpoint=payload["endpoint"],
             keys=payload["keys"],
         )
+        self.set_status(204)
+
+
+class AppSeenHandler(tornado.web.RequestHandler):
+    def initialize(self, session_service) -> None:
+        self.session_service = session_service
+
+    def post(self) -> None:
+        payload = tornado.escape.json_decode(self.request.body or b"{}")
+        self.session_service.mark_app_seen(payload["lastSeenAt"])
+        self.set_status(204)
+
+
+class SessionSeenHandler(tornado.web.RequestHandler):
+    def initialize(self, session_service) -> None:
+        self.session_service = session_service
+
+    def post(self, session_id: str) -> None:
+        payload = tornado.escape.json_decode(self.request.body or b"{}")
+        self.session_service.mark_session_seen(session_id, payload["lastSeenEventSeq"])
         self.set_status(204)
 
 

@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -9,13 +10,32 @@ from allhands_host.models import SessionRecord
 from allhands_host.store import SessionStore
 
 
+class AttentionRequiredError(RuntimeError):
+    pass
+
+
 class RecordingClient:
     def __init__(self, session: SessionRecord, store: SessionStore):
         self.session = session
         self.store = store
+        self.attention_required: AttentionRequiredError | None = None
 
     async def request_permission(self, options, session_id, tool_call, **kwargs):
-        return acp.RequestPermissionResponse(outcome="selected", optionId=options[0].option_id)
+        self.attention_required = AttentionRequiredError("Agent needs permission to continue.")
+        self.store.append_event(
+            self.session.id,
+            "acp.permission_requested",
+            {
+                "options": [
+                    {
+                        "id": option.option_id,
+                        "label": getattr(option, "name", option.option_id),
+                    }
+                    for option in options
+                ],
+            },
+        )
+        return acp.RequestPermissionResponse(outcome={"outcome": "cancelled"})
 
     async def session_update(self, session_id, update, **kwargs):
         if getattr(update, "session_update", None) == "agent_thought_chunk":
@@ -52,20 +72,50 @@ class RecordingClient:
     def on_connect(self, conn):
         self.conn = conn
 
+    def consume_attention_required(self) -> AttentionRequiredError | None:
+        current = self.attention_required
+        self.attention_required = None
+        return current
+
 
 @dataclass
 class Attachment:
     session: SessionRecord
     store: SessionStore
+    client: RecordingClient
     connection: Any
     process: asyncio.subprocess.Process
     agent_session_id: str
 
-    async def prompt(self, text: str) -> None:
-        await self.connection.prompt(
-            prompt=[acp.text_block(text)],
-            session_id=self.agent_session_id,
-        )
+    async def prompt(self, text: str):
+        try:
+            response = await self.connection.prompt(
+                prompt=[acp.text_block(text)],
+                session_id=self.agent_session_id,
+            )
+        except Exception:
+            attention_required = self.client.consume_attention_required()
+            if attention_required is not None:
+                raise attention_required
+            raise
+
+        attention_required = self.client.consume_attention_required()
+        if attention_required is not None:
+            raise attention_required
+        return response
+
+    async def cancel(self) -> None:
+        with contextlib.suppress(Exception):
+            await self.connection.cancel(session_id=self.agent_session_id)
+        if self.process.returncode is not None:
+            return
+        self.process.terminate()
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(self.process.wait(), timeout=2)
+            return
+        self.process.kill()
+        with contextlib.suppress(Exception):
+            await self.process.wait()
 
 
 async def attach_and_initialize(
@@ -94,6 +144,7 @@ async def attach_and_initialize(
     return Attachment(
         session=session,
         store=store,
+        client=client,
         connection=connection,
         process=process,
         agent_session_id=new_session.sessionId,
@@ -127,6 +178,7 @@ async def attach_and_resume(
     return Attachment(
         session=session,
         store=store,
+        client=client,
         connection=connection,
         process=process,
         agent_session_id=session_token,

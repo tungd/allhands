@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
+import shutil
 import subprocess
 
 
@@ -21,11 +22,27 @@ class WorktreeManager:
     def create(self, repo_path: Path, session_id: str) -> Path:
         repo_path = self.validate_repo_path(repo_path)
         worktrees_root = repo_path.parent / ".worktrees"
-        worktrees_root.mkdir(exist_ok=True)
+        worktrees_root.mkdir(parents=True, exist_ok=True)
         worktree_path = worktrees_root / session_id
         branch_name = f"allhands/{session_id}"
+        if worktree_path.exists():
+            subprocess.run(
+                ["git", "-C", str(repo_path), "worktree", "remove", "--force", str(worktree_path)],
+                check=False,
+            )
+            if worktree_path.exists():
+                shutil.rmtree(worktree_path)
         subprocess.run(
-            ["git", "-C", str(repo_path), "worktree", "add", "-b", branch_name, str(worktree_path)],
+            ["git", "-C", str(repo_path), "worktree", "add", "-B", branch_name, str(worktree_path)],
             check=True,
         )
         return worktree_path
+
+    def remove(self, repo_path: Path, worktree_path: Path) -> None:
+        repo_path = self.validate_repo_path(repo_path)
+        if not worktree_path.exists():
+            return
+        subprocess.run(
+            ["git", "-C", str(repo_path), "worktree", "remove", "--force", str(worktree_path)],
+            check=True,
+        )

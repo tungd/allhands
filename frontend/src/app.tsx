@@ -10,21 +10,8 @@ import { ControlRoom } from "./routes/control-room";
 import { Inbox } from "./routes/inbox";
 import { SessionRoute } from "./routes/session";
 
-
-function ControlRoomPage() {
-  const state = createSessionsState();
-  return <ControlRoom sessions={state().sessions} />;
-}
-
-
-function InboxPage() {
-  const state = createSessionsState();
-  return <Inbox sessions={state().sessions} />;
-}
-
-
 function SessionPage() {
-  return <SessionRoute items={[]} />;
+  return <SessionRoute />;
 }
 
 function AppShell(props: { children: JSX.Element }) {
@@ -42,7 +29,17 @@ function AppShell(props: { children: JSX.Element }) {
   );
 }
 
-export function App() {
+export function App(props: { vapidPublicKey?: string }) {
+  function ControlRoomPage() {
+    const state = createSessionsState(props.vapidPublicKey ?? "");
+    return <ControlRoom sessions={state().sessions} />;
+  }
+
+  function InboxPage() {
+    const state = createSessionsState(props.vapidPublicKey ?? "");
+    return <Inbox sessions={state().sessions} />;
+  }
+
   return (
     <Router root={AppShell}>
       <Route path="/" component={ControlRoomPage} />

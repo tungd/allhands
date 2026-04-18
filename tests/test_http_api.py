@@ -9,16 +9,20 @@ from allhands_host.config import Settings
 
 
 class FakeSession:
-    def __init__(self, session_id: str, status: str):
+    def __init__(self, session_id: str, status: str, workspace_state: str = "ready"):
         self.id = session_id
         self.status = status
+        self.workspace_state = workspace_state
+        self.repo_path = "/tmp/projects/api"
+        self.launcher = "codex"
 
 
 class FakeEvent:
-    def __init__(self, seq: int, type_: str, payload: dict):
+    def __init__(self, seq: int, type_: str, payload: dict, created_at: str = "2026-04-18T00:00:00+00:00"):
         self.seq = seq
         self.type = type_
         self.payload = payload
+        self.created_at = created_at
 
 
 class FakeNotificationStore:
@@ -35,6 +39,10 @@ class FakeNotificationService:
 
 
 class FakeSessionService:
+    def __init__(self):
+        self.app_seen = []
+        self.session_seen = []
+
     async def create_session(self, launcher: str, repo_path: str, prompt: str):
         return FakeSession("session_123", "created")
 
@@ -44,16 +52,49 @@ class FakeSessionService:
     async def resume(self, session_id: str):
         return FakeSession(session_id, "running")
 
+    async def cancel(self, session_id: str):
+        return FakeSession(session_id, "resume_available")
+
+    async def reset(self, session_id: str):
+        return FakeSession(session_id, "resume_available", workspace_state="missing")
+
     def archive(self, session_id: str):
         return FakeSession(session_id, "archived")
 
+    def get_session(self, session_id: str):
+        return {
+            "id": session_id,
+            "status": "completed",
+            "workspace_state": "ready",
+            "repo_path": "/tmp/projects/api",
+            "launcher": "codex",
+        }
+
+    def list_sessions(self):
+        return [
+            {
+                "id": "session_123",
+                "status": "completed",
+                "workspace_state": "ready",
+                "repo_path": "/tmp/projects/api",
+                "launcher": "codex",
+            }
+        ]
+
     def list_events(self, session_id: str, after_seq: int):
         return [FakeEvent(1, "session.created", {"status": "created"})]
+
+    def mark_app_seen(self, timestamp: str):
+        self.app_seen.append(timestamp)
+
+    def mark_session_seen(self, session_id: str, event_seq: int):
+        self.session_seen.append({"sessionId": session_id, "eventSeq": event_seq})
 
 
 class SessionApiTest(AsyncHTTPTestCase):
     def get_app(self):
         self.notification_service = FakeNotificationService()
+        self.session_service = FakeSessionService()
         settings = Settings(
             project_root=Path("/tmp/projects"),
             database_path=Path("/tmp/allhands.sqlite3"),
@@ -64,7 +105,7 @@ class SessionApiTest(AsyncHTTPTestCase):
         )
         return build_app(
             settings=settings,
-            session_service=FakeSessionService(),
+            session_service=self.session_service,
             notification_service=self.notification_service,
         )
 
@@ -93,6 +134,38 @@ class SessionApiTest(AsyncHTTPTestCase):
         assert response.headers["Content-Type"].startswith("text/event-stream")
         assert "id: 1" in body
         assert "event: session.created" in body
+
+    def test_session_timeline_snapshot_returns_json(self):
+        response = self.fetch("/sessions/session_123/timeline")
+        payload = json.loads(response.body)
+
+        assert response.code == 200
+        assert payload["events"][0]["type"] == "session.created"
+
+    def test_reset_endpoint_returns_updated_projection(self):
+        response = self.fetch("/sessions/session_123/reset", method="POST", body="{}")
+        payload = json.loads(response.body)
+
+        assert response.code == 200
+        assert payload["workspaceState"] == "missing"
+        assert payload["runState"] == "resume_available"
+
+    def test_seen_endpoints_accept_app_and_session_cursors(self):
+        app_seen = self.fetch(
+            "/seen/app",
+            method="POST",
+            body=json.dumps({"lastSeenAt": "2026-04-18T00:01:00+00:00"}),
+        )
+        session_seen = self.fetch(
+            "/sessions/session_123/seen",
+            method="POST",
+            body=json.dumps({"lastSeenEventSeq": 4}),
+        )
+
+        assert app_seen.code == 204
+        assert session_seen.code == 204
+        assert self.session_service.app_seen == ["2026-04-18T00:01:00+00:00"]
+        assert self.session_service.session_seen == [{"sessionId": "session_123", "eventSeq": 4}]
 
     def test_push_subscription_endpoint_persists_subscription(self):
         response = self.fetch(

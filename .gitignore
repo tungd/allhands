@@ -20,5 +20,6 @@ server/.coverage
 __pycache__/
 *.pyc
 .allhands.sqlite3
+.envrc
 frontend/node_modules/
 frontend/dist/

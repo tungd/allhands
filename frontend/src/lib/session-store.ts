@@ -1,7 +1,8 @@
 import { createEffect, createSignal, onCleanup, onMount } from "solid-js";
 
-import { listSessions, type SessionSummary } from "./api";
+import { listSessions, markAppSeen, type SessionSummary } from "./api";
 import { subscribeToSession } from "./events";
+import { maybeEnableNotifications } from "./push";
 
 export type SessionState = {
   sessions: SessionSummary[];
@@ -31,9 +32,17 @@ export function applyEvent(state: SessionState, event: SessionEvent): SessionSta
               ? "attention_required"
               : event.type === "session.completed"
                 ? "completed"
+              : event.type === "session.archived"
+                  ? "archived"
+                  : session.status,
+          runState:
+            event.type === "session.attention_required"
+              ? "attention_required"
+              : event.type === "session.completed"
+                ? "completed"
                 : event.type === "session.archived"
                   ? "archived"
-                  : session.status
+                  : session.runState
         }
       : session
   );
@@ -43,11 +52,31 @@ export function applyEvent(state: SessionState, event: SessionEvent): SessionSta
   };
 }
 
-export function createSessionsState() {
+export function createSessionsState(vapidPublicKey = "") {
   const [state, setState] = createSignal<SessionState>({ sessions: [] });
 
   onMount(async () => {
-    setState(await listSessions());
+    const next = await listSessions();
+    await maybeEnableNotifications({
+      previousCount: state().sessions.length,
+      nextCount: next.sessions.length,
+      vapidPublicKey
+    });
+    setState(next);
+  });
+
+  onMount(() => {
+    function markVisibleSeen() {
+      if (document.visibilityState === "visible") {
+        void markAppSeen(new Date().toISOString());
+      }
+    }
+
+    markVisibleSeen();
+    document.addEventListener("visibilitychange", markVisibleSeen);
+    onCleanup(() => {
+      document.removeEventListener("visibilitychange", markVisibleSeen);
+    });
   });
 
   createEffect(() => {

@@ -6,12 +6,18 @@ export type SessionStreamEvent = {
 
 const SESSION_EVENT_TYPES = [
   "session.created",
+  "session.prompted",
   "session.bound",
+  "session.cancelled",
   "session.attention_required",
   "session.completed",
   "session.archived",
+  "session.failed",
+  "workspace.reset",
+  "workspace.recreated",
   "acp.initialized",
-  "acp.thought"
+  "acp.thought",
+  "acp.permission_requested"
 ] as const;
 
 export function subscribeToSession(sessionId: string, onEvent: (event: SessionStreamEvent) => void) {
