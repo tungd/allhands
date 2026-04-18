@@ -50,3 +50,15 @@ class EventRecord:
     type: str
     payload: dict
     created_at: str
+
+
+@dataclass(frozen=True)
+class CodexSessionRecord:
+    session_id: str
+    thread_id: str
+    active_turn_id: str | None
+    pending_request_id: str | None
+    pending_request_kind: str | None
+    pending_request_payload: dict | None
+    created_at: str
+    updated_at: str

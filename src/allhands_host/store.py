@@ -1,7 +1,7 @@
 import json
 
 from allhands_host.db import Database
-from allhands_host.models import EventRecord, SessionRecord, utc_now
+from allhands_host.models import CodexSessionRecord, EventRecord, SessionRecord, utc_now
 
 _UNSET = object()
 
@@ -36,6 +36,90 @@ class SessionStore:
                     session.created_at,
                     session.updated_at,
                 ),
+            )
+
+    def upsert_codex_session(self, session: CodexSessionRecord) -> None:
+        with self.db.connect() as connection:
+            connection.execute(
+                """
+                insert into codex_sessions (
+                  session_id,
+                  thread_id,
+                  active_turn_id,
+                  pending_request_id,
+                  pending_request_kind,
+                  pending_request_payload_json,
+                  created_at,
+                  updated_at
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(session_id) do update set
+                  thread_id = excluded.thread_id,
+                  active_turn_id = excluded.active_turn_id,
+                  pending_request_id = excluded.pending_request_id,
+                  pending_request_kind = excluded.pending_request_kind,
+                  pending_request_payload_json = excluded.pending_request_payload_json,
+                  updated_at = excluded.updated_at
+                """,
+                (
+                    session.session_id,
+                    session.thread_id,
+                    session.active_turn_id,
+                    session.pending_request_id,
+                    session.pending_request_kind,
+                    json.dumps(session.pending_request_payload),
+                    session.created_at,
+                    session.updated_at,
+                ),
+            )
+
+    def get_codex_session(self, session_id: str) -> CodexSessionRecord:
+        with self.db.connect() as connection:
+            row = connection.execute(
+                """
+                select
+                  session_id,
+                  thread_id,
+                  active_turn_id,
+                  pending_request_id,
+                  pending_request_kind,
+                  pending_request_payload_json,
+                  created_at,
+                  updated_at
+                from codex_sessions
+                where session_id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(session_id)
+        return CodexSessionRecord(
+            session_id=row["session_id"],
+            thread_id=row["thread_id"],
+            active_turn_id=row["active_turn_id"],
+            pending_request_id=row["pending_request_id"],
+            pending_request_kind=row["pending_request_kind"],
+            pending_request_payload=(
+                json.loads(row["pending_request_payload_json"])
+                if row["pending_request_payload_json"] is not None
+                else None
+            ),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def clear_codex_pending_request(self, session_id: str) -> None:
+        with self.db.connect() as connection:
+            connection.execute(
+                """
+                update codex_sessions
+                set pending_request_id = null,
+                    pending_request_kind = null,
+                    pending_request_payload_json = null,
+                    updated_at = ?
+                where session_id = ?
+                """,
+                (utc_now(), session_id),
             )
 
     def get_session(self, session_id: str) -> SessionRecord:

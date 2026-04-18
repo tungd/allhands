@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from allhands_host.db import Database
+from allhands_host import models
 from allhands_host.models import SessionRecord
 from allhands_host.store import SessionStore
 
@@ -77,3 +78,37 @@ def test_store_persists_lifecycle_projection_and_seen_cursors(tmp_path: Path):
     assert fetched.last_notified_at == "2026-04-18T00:00:00+00:00"
     assert fetched.last_seen_event_seq == 7
     assert store.get_app_last_seen_at() == "2026-04-18T00:01:00+00:00"
+
+
+def test_store_persists_codex_session_metadata(tmp_path: Path):
+    db = Database(tmp_path / "allhands.sqlite3")
+    db.migrate()
+    store = SessionStore(db)
+
+    session = SessionRecord.new(
+        launcher="codex",
+        repo_path="/tmp/projects/api",
+        worktree_path="/tmp/projects/.worktrees/session_1",
+    )
+    store.create_session(session)
+    assert hasattr(models, "CodexSessionRecord")
+
+    store.upsert_codex_session(
+        models.CodexSessionRecord(
+            session_id=session.id,
+            thread_id="thr_123",
+            active_turn_id="turn_123",
+            pending_request_id="req_123",
+            pending_request_kind="command",
+            pending_request_payload={"summary": "Run tests"},
+            created_at=session.created_at,
+            updated_at=session.updated_at,
+        )
+    )
+
+    fetched = store.get_codex_session(session.id)
+
+    assert fetched.thread_id == "thr_123"
+    assert fetched.active_turn_id == "turn_123"
+    assert fetched.pending_request_kind == "command"
+    assert fetched.pending_request_payload == {"summary": "Run tests"}

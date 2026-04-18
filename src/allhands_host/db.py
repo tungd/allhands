@@ -38,6 +38,17 @@ create table if not exists app_state (
   singleton integer primary key check (singleton = 1),
   last_seen_at text
 );
+
+create table if not exists codex_sessions (
+  session_id text primary key,
+  thread_id text not null unique,
+  active_turn_id text,
+  pending_request_id text,
+  pending_request_kind text,
+  pending_request_payload_json text,
+  created_at text not null,
+  updated_at text not null
+);
 """
 
 

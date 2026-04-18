@@ -12,6 +12,8 @@ class Settings:
     port: int
     vapid_public_key: str
     vapid_private_key: str
+    codex_app_server_port: int
+    codex_binary: str
 
 
 _OPTIONS_DEFINED = False
@@ -28,6 +30,8 @@ def define_options() -> None:
     define("port", default=21991, type=int, help="Bind port")
     define("vapid_public_key", default="", help="Web Push VAPID public key")
     define("vapid_private_key", default="", help="Web Push VAPID private key")
+    define("codex_app_server_port", default=21992, type=int, help="Loopback port for shared codex app-server")
+    define("codex_binary", default="codex", help="Codex CLI binary")
     _OPTIONS_DEFINED = True
 
 
@@ -44,4 +48,6 @@ def load_settings(opts=options) -> Settings:
         port=opts.port,
         vapid_public_key=opts.vapid_public_key,
         vapid_private_key=opts.vapid_private_key,
+        codex_app_server_port=opts.codex_app_server_port,
+        codex_binary=opts.codex_binary,
     )
