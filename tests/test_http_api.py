@@ -38,6 +38,15 @@ class FakeNotificationService:
         self.store = FakeNotificationStore()
 
 
+class FakeRepoCatalog:
+    def __init__(self):
+        self.queries = []
+
+    def list_repos(self, query: str = ""):
+        self.queries.append(query)
+        return [{"name": "api", "path": "/tmp/projects/api"}]
+
+
 class FakeSessionService:
     def __init__(self):
         self.app_seen = []
@@ -95,6 +104,7 @@ class SessionApiTest(AsyncHTTPTestCase):
     def get_app(self):
         self.notification_service = FakeNotificationService()
         self.session_service = FakeSessionService()
+        self.repo_catalog = FakeRepoCatalog()
         settings = Settings(
             project_root=Path("/tmp/projects"),
             database_path=Path("/tmp/allhands.sqlite3"),
@@ -107,6 +117,7 @@ class SessionApiTest(AsyncHTTPTestCase):
             settings=settings,
             session_service=self.session_service,
             notification_service=self.notification_service,
+            repo_catalog=self.repo_catalog,
         )
 
     def test_create_session_returns_session_id(self):
@@ -187,6 +198,14 @@ class SessionApiTest(AsyncHTTPTestCase):
             }
         ]
 
+    def test_repo_discovery_returns_results(self):
+        response = self.fetch("/repos?query=api")
+        payload = json.loads(response.body)
+
+        assert response.code == 200
+        assert payload == {"repos": [{"name": "api", "path": "/tmp/projects/api"}]}
+        assert self.repo_catalog.queries == ["api"]
+
 
 class FrontendShellTest(AsyncHTTPTestCase):
     def setUp(self):
@@ -215,6 +234,7 @@ class FrontendShellTest(AsyncHTTPTestCase):
             settings=settings,
             session_service=FakeSessionService(),
             notification_service=FakeNotificationService(),
+            repo_catalog=FakeRepoCatalog(),
             frontend_dist=Path(self.frontend_dist.name),
         )
 
@@ -227,6 +247,12 @@ class FrontendShellTest(AsyncHTTPTestCase):
 
     def test_control_room_route_falls_back_to_index(self):
         response = self.fetch("/control-room")
+
+        assert response.code == 200
+        assert "All Hands UI" in response.body.decode()
+
+    def test_control_room_new_route_falls_back_to_index(self):
+        response = self.fetch("/control-room/new")
 
         assert response.code == 200
         assert "All Hands UI" in response.body.decode()

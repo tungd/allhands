@@ -49,6 +49,12 @@ def serialize_event(event: object) -> dict:
     }
 
 
+def serialize_repo(repo: object) -> dict:
+    if isinstance(repo, dict):
+        return {"name": repo["name"], "path": repo["path"]}
+    return {"name": repo.name, "path": repo.path}
+
+
 class HealthHandler(tornado.web.RequestHandler):
     def get(self) -> None:
         self.set_header("Content-Type", "application/json")
@@ -68,6 +74,16 @@ class ServerInfoHandler(tornado.web.RequestHandler):
                 "vapidPublicKey": self.settings_obj.vapid_public_key,
             }
         )
+
+
+class ReposHandler(tornado.web.RequestHandler):
+    def initialize(self, repo_catalog) -> None:
+        self.repo_catalog = repo_catalog
+
+    def get(self) -> None:
+        query = self.get_argument("query", "")
+        repos = self.repo_catalog.list_repos(query)
+        self.finish({"repos": [serialize_repo(repo) for repo in repos]})
 
 
 class SessionsHandler(tornado.web.RequestHandler):

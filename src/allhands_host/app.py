@@ -8,6 +8,7 @@ from allhands_host.http import (
     AppSeenHandler,
     HealthHandler,
     FrontendShellHandler,
+    ReposHandler,
     SessionCancelHandler,
     ServerInfoHandler,
     SessionArchiveHandler,
@@ -22,6 +23,7 @@ from allhands_host.http import (
     PushSubscriptionHandler,
 )
 from allhands_host.notifications import NotificationService
+from allhands_host.repo_catalog import RepoCatalog
 from allhands_host.session_service import SessionService
 from allhands_host.store import SessionStore
 
@@ -34,11 +36,13 @@ def build_app(
     settings: Settings | None = None,
     session_service: SessionService | None = None,
     notification_service: NotificationService | None = None,
+    repo_catalog: RepoCatalog | None = None,
     frontend_dist: Path | None = None,
 ) -> tornado.web.Application:
     define_options()
     settings = settings or load_settings()
     frontend_dist = frontend_dist or default_frontend_dist()
+    repo_catalog = repo_catalog or RepoCatalog(settings.project_root)
     store: SessionStore | None = None
     if session_service is None:
         database = Database(settings.database_path)
@@ -63,6 +67,7 @@ def build_app(
     routes: list[tuple] = [
         (r"/healthz", HealthHandler),
         (r"/server-info", ServerInfoHandler, {"settings": settings}),
+        (r"/repos", ReposHandler, {"repo_catalog": repo_catalog}),
         (r"/sessions", SessionsHandler, {"session_service": session_service}),
         (r"/sessions/([^/]+)", SessionDetailHandler, {"session_service": session_service}),
         (r"/sessions/([^/]+)/timeline", SessionTimelineHandler, {"session_service": session_service}),
@@ -96,7 +101,11 @@ def build_app(
                     {"path": str(frontend_dist / "assets")},
                 ),
                 (r"/", FrontendShellHandler, {"frontend_dist": frontend_dist}),
-                (r"/(control-room|inbox|session/[^/]+)", FrontendShellHandler, {"frontend_dist": frontend_dist}),
+                (
+                    r"/(control-room(?:/new)?|inbox|session/[^/]+)",
+                    FrontendShellHandler,
+                    {"frontend_dist": frontend_dist},
+                ),
             ]
         )
 
