@@ -24,6 +24,8 @@ class NoPendingApprovalError(RuntimeError):
 
 
 class CodexSessionAdapter:
+    _BOOTSTRAP_IN_PROGRESS_STATUSES = {"created"}
+
     def __init__(
         self,
         store: SessionStore,
@@ -83,7 +85,12 @@ class CodexSessionAdapter:
             await asyncio.to_thread(self.worktree_manager.create, repo_path, session.id)
             self.store.append_event(session.id, "workspace.recreated", {})
 
-        codex = self.store.get_codex_session(session.id)
+        try:
+            codex = self.store.get_codex_session(session.id)
+        except KeyError:
+            if session.status in self._BOOTSTRAP_IN_PROGRESS_STATUSES:
+                return self.store.get_session(session.id)
+            raise
         client = await self._open_client(session.id)
         thread = await client.thread_resume(codex.thread_id)
         self.live_sessions[session.id] = LiveCodexSession(

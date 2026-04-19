@@ -155,6 +155,32 @@ async def test_resume_uses_stored_thread_id(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_resume_returns_created_session_while_bootstrap_is_still_running(tmp_path: Path):
+    module = load_codex_session_adapter_module()
+    db = Database(tmp_path / "allhands.sqlite3")
+    db.migrate()
+    store = SessionStore(db)
+    session = create_session(store, tmp_path)
+
+    async def client_factory(_handle):
+        raise AssertionError("resume should not open a Codex client before bootstrap persists the thread")
+
+    adapter = module.CodexSessionAdapter(
+        store=store,
+        worktree_manager=FakeWorktreeManager(),
+        daemon_manager=FakeDaemonManager(),
+        client_factory=client_factory,
+    )
+
+    resumed = await adapter.resume(session)
+
+    assert resumed.status == "created"
+    assert resumed.workspace_state == "ready"
+    with pytest.raises(KeyError):
+        store.get_codex_session(session.id)
+
+
+@pytest.mark.asyncio
 async def test_approval_request_moves_session_to_attention_required(tmp_path: Path):
     module = load_codex_session_adapter_module()
     db = Database(tmp_path / "allhands.sqlite3")
