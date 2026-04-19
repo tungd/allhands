@@ -51,6 +51,13 @@ create table if not exists codex_sessions (
   created_at text not null,
   updated_at text not null
 );
+
+create table if not exists users (
+  username text primary key,
+  password_hash text not null,
+  created_at text not null,
+  updated_at text not null
+);
 """
 
 
@@ -72,6 +79,7 @@ class Database:
         with self.connect() as connection:
             connection.executescript(SCHEMA)
             self._migrate_sessions_table(connection)
+            self._migrate_users_table(connection)
 
     def _migrate_sessions_table(self, connection: sqlite3.Connection) -> None:
         columns = {
@@ -97,5 +105,17 @@ class Database:
                 last_activity_at = coalesce(last_activity_at, updated_at),
                 active_notification_kind = coalesce(active_notification_kind, 'none'),
                 last_seen_event_seq = coalesce(last_seen_event_seq, 0)
+            """
+        )
+
+    def _migrate_users_table(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            create table if not exists users (
+              username text primary key,
+              password_hash text not null,
+              created_at text not null,
+              updated_at text not null
+            )
             """
         )

@@ -5,6 +5,7 @@ import tornado.escape
 import tornado.iostream
 import tornado.web
 
+from allhands_host.auth import REALM
 from allhands_host.config import Settings
 from allhands_host.codex_session_adapter import NoPendingApprovalError
 from allhands_host.launchers.catalog import available_launchers
@@ -63,7 +64,30 @@ class HealthHandler(tornado.web.RequestHandler):
         self.finish(b'{"ok":true}')
 
 
-class ServerInfoHandler(tornado.web.RequestHandler):
+class BasicAuthMixin:
+    def prepare(self):
+        authenticator = self.application.settings.get("authenticator")
+        if authenticator is None:
+            return super().prepare()
+        user = authenticator.authenticate(self.request.headers.get("Authorization"))
+        if user is None:
+            self.set_status(401)
+            self.set_header("WWW-Authenticate", f'Basic realm="{REALM}"')
+            self.finish({"error": "authentication required"})
+            raise tornado.web.Finish()
+        self._current_user = user
+        return super().prepare()
+
+
+class AuthenticatedHandler(BasicAuthMixin, tornado.web.RequestHandler):
+    pass
+
+
+class AuthenticatedStaticFileHandler(BasicAuthMixin, tornado.web.StaticFileHandler):
+    pass
+
+
+class ServerInfoHandler(AuthenticatedHandler):
     def initialize(self, settings: Settings) -> None:
         self.settings_obj = settings
 
@@ -78,7 +102,7 @@ class ServerInfoHandler(tornado.web.RequestHandler):
         )
 
 
-class ReposHandler(tornado.web.RequestHandler):
+class ReposHandler(AuthenticatedHandler):
     def initialize(self, repo_catalog) -> None:
         self.repo_catalog = repo_catalog
 
@@ -88,7 +112,7 @@ class ReposHandler(tornado.web.RequestHandler):
         self.finish({"repos": [serialize_repo(repo) for repo in repos]})
 
 
-class SessionsHandler(tornado.web.RequestHandler):
+class SessionsHandler(AuthenticatedHandler):
     def initialize(self, session_service) -> None:
         self.session_service = session_service
 
@@ -106,7 +130,7 @@ class SessionsHandler(tornado.web.RequestHandler):
         self.finish(serialize_session(session))
 
 
-class SessionDetailHandler(tornado.web.RequestHandler):
+class SessionDetailHandler(AuthenticatedHandler):
     def initialize(self, session_service) -> None:
         self.session_service = session_service
 
@@ -114,7 +138,7 @@ class SessionDetailHandler(tornado.web.RequestHandler):
         self.finish(serialize_session(self.session_service.get_session(session_id)))
 
 
-class SessionTimelineHandler(tornado.web.RequestHandler):
+class SessionTimelineHandler(AuthenticatedHandler):
     def initialize(self, session_service) -> None:
         self.session_service = session_service
 
@@ -123,7 +147,7 @@ class SessionTimelineHandler(tornado.web.RequestHandler):
         self.finish({"events": [serialize_event(event) for event in events]})
 
 
-class SessionPromptHandler(tornado.web.RequestHandler):
+class SessionPromptHandler(AuthenticatedHandler):
     def initialize(self, session_service) -> None:
         self.session_service = session_service
 
@@ -133,7 +157,7 @@ class SessionPromptHandler(tornado.web.RequestHandler):
         self.finish({"accepted": accepted})
 
 
-class SessionResumeHandler(tornado.web.RequestHandler):
+class SessionResumeHandler(AuthenticatedHandler):
     def initialize(self, session_service) -> None:
         self.session_service = session_service
 
@@ -142,7 +166,7 @@ class SessionResumeHandler(tornado.web.RequestHandler):
         self.finish(serialize_session(session))
 
 
-class SessionCancelHandler(tornado.web.RequestHandler):
+class SessionCancelHandler(AuthenticatedHandler):
     def initialize(self, session_service) -> None:
         self.session_service = session_service
 
@@ -151,7 +175,7 @@ class SessionCancelHandler(tornado.web.RequestHandler):
         self.finish(serialize_session(session))
 
 
-class SessionResetHandler(tornado.web.RequestHandler):
+class SessionResetHandler(AuthenticatedHandler):
     def initialize(self, session_service) -> None:
         self.session_service = session_service
 
@@ -160,7 +184,7 @@ class SessionResetHandler(tornado.web.RequestHandler):
         self.finish(serialize_session(session))
 
 
-class SessionArchiveHandler(tornado.web.RequestHandler):
+class SessionArchiveHandler(AuthenticatedHandler):
     def initialize(self, session_service) -> None:
         self.session_service = session_service
 
@@ -169,7 +193,7 @@ class SessionArchiveHandler(tornado.web.RequestHandler):
         self.finish(serialize_session(session))
 
 
-class SessionApprovalApproveHandler(tornado.web.RequestHandler):
+class SessionApprovalApproveHandler(AuthenticatedHandler):
     def initialize(self, session_service) -> None:
         self.session_service = session_service
 
@@ -181,7 +205,7 @@ class SessionApprovalApproveHandler(tornado.web.RequestHandler):
         self.finish(serialize_session(session))
 
 
-class SessionApprovalDenyHandler(tornado.web.RequestHandler):
+class SessionApprovalDenyHandler(AuthenticatedHandler):
     def initialize(self, session_service) -> None:
         self.session_service = session_service
 
@@ -193,7 +217,7 @@ class SessionApprovalDenyHandler(tornado.web.RequestHandler):
         self.finish(serialize_session(session))
 
 
-class SessionEventsHandler(tornado.web.RequestHandler):
+class SessionEventsHandler(AuthenticatedHandler):
     def initialize(self, session_service) -> None:
         self.session_service = session_service
 
@@ -221,7 +245,7 @@ class SessionEventsHandler(tornado.web.RequestHandler):
             return
 
 
-class PushSubscriptionHandler(tornado.web.RequestHandler):
+class PushSubscriptionHandler(AuthenticatedHandler):
     def initialize(self, notification_service) -> None:
         self.notification_service = notification_service
 
@@ -234,7 +258,7 @@ class PushSubscriptionHandler(tornado.web.RequestHandler):
         self.set_status(204)
 
 
-class AppSeenHandler(tornado.web.RequestHandler):
+class AppSeenHandler(AuthenticatedHandler):
     def initialize(self, session_service) -> None:
         self.session_service = session_service
 
@@ -244,7 +268,7 @@ class AppSeenHandler(tornado.web.RequestHandler):
         self.set_status(204)
 
 
-class SessionSeenHandler(tornado.web.RequestHandler):
+class SessionSeenHandler(AuthenticatedHandler):
     def initialize(self, session_service) -> None:
         self.session_service = session_service
 
@@ -254,7 +278,7 @@ class SessionSeenHandler(tornado.web.RequestHandler):
         self.set_status(204)
 
 
-class FrontendShellHandler(tornado.web.RequestHandler):
+class FrontendShellHandler(AuthenticatedHandler):
     def initialize(self, frontend_dist: Path) -> None:
         self.index_path = Path(frontend_dist) / "index.html"
 

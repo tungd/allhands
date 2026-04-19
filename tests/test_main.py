@@ -1,6 +1,7 @@
 import asyncio
 from pathlib import Path
 import subprocess
+import sys
 from unittest.mock import Mock
 
 import pytest
@@ -62,7 +63,7 @@ def test_main_script_runs_directly_from_src_path():
     repo_root = Path(__file__).resolve().parents[1]
 
     result = subprocess.run(
-        ["uv", "run", "python", "src/allhands_host/main.py", "--help"],
+        [sys.executable, "src/allhands_host/main.py", "--help"],
         cwd=repo_root,
         capture_output=True,
         text=True,
@@ -71,3 +72,4 @@ def test_main_script_runs_directly_from_src_path():
 
     assert result.returncode == 0, result.stderr
     assert "--vapid-public-key" in (result.stdout + result.stderr)
+    assert "--default-username" in (result.stdout + result.stderr)

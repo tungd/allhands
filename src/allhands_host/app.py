@@ -2,10 +2,12 @@ from pathlib import Path
 
 import tornado.web
 
+from allhands_host.auth import BasicAuthenticator, ensure_default_user
 from allhands_host.config import Settings, define_options, load_settings
 from allhands_host.db import Database
 from allhands_host.http import (
     AppSeenHandler,
+    AuthenticatedStaticFileHandler,
     HealthHandler,
     FrontendShellHandler,
     ReposHandler,
@@ -27,7 +29,7 @@ from allhands_host.http import (
 from allhands_host.notifications import NotificationService
 from allhands_host.repo_catalog import RepoCatalog
 from allhands_host.session_service import SessionService
-from allhands_host.store import SessionStore
+from allhands_host.store import SessionStore, UserStore
 
 
 def default_frontend_dist() -> Path:
@@ -45,15 +47,16 @@ def build_app(
     settings = settings or load_settings()
     frontend_dist = frontend_dist or default_frontend_dist()
     repo_catalog = repo_catalog or RepoCatalog(settings.project_root)
+    database = Database(settings.database_path)
+    database.migrate()
+    user_store = UserStore(database)
+    ensure_default_user(user_store, settings.default_username, settings.default_password)
+    authenticator = BasicAuthenticator(user_store)
     store: SessionStore | None = None
     if session_service is None:
-        database = Database(settings.database_path)
-        database.migrate()
         store = SessionStore(database)
     if notification_service is None:
         if store is None:
-            database = Database(settings.database_path)
-            database.migrate()
             store = SessionStore(database)
         notification_service = NotificationService(
             store=store,
@@ -91,17 +94,17 @@ def build_app(
             [
                 (
                     r"/(manifest\.webmanifest)",
-                    tornado.web.StaticFileHandler,
+                    AuthenticatedStaticFileHandler,
                     {"path": str(frontend_dist)},
                 ),
                 (
                     r"/(sw\.js)",
-                    tornado.web.StaticFileHandler,
+                    AuthenticatedStaticFileHandler,
                     {"path": str(frontend_dist)},
                 ),
                 (
                     r"/assets/(.*)",
-                    tornado.web.StaticFileHandler,
+                    AuthenticatedStaticFileHandler,
                     {"path": str(frontend_dist / "assets")},
                 ),
                 (r"/", FrontendShellHandler, {"frontend_dist": frontend_dist}),
@@ -113,4 +116,4 @@ def build_app(
             ]
         )
 
-    return tornado.web.Application(routes)
+    return tornado.web.Application(routes, authenticator=authenticator)

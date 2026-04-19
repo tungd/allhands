@@ -2,8 +2,8 @@ from pathlib import Path
 
 from allhands_host.db import Database
 from allhands_host import models
-from allhands_host.models import SessionRecord
-from allhands_host.store import SessionStore
+from allhands_host.models import SessionRecord, UserRecord, utc_now
+from allhands_host.store import SessionStore, UserStore
 
 
 def test_store_persists_sessions_and_events(tmp_path: Path):
@@ -112,3 +112,25 @@ def test_store_persists_codex_session_metadata(tmp_path: Path):
     assert fetched.active_turn_id == "turn_123"
     assert fetched.pending_request_kind == "command"
     assert fetched.pending_request_payload == {"summary": "Run tests"}
+
+
+def test_user_store_persists_users(tmp_path: Path):
+    db = Database(tmp_path / "allhands.sqlite3")
+    db.migrate()
+    store = UserStore(db)
+    now = utc_now()
+
+    store.upsert_user(
+        UserRecord(
+            username="td",
+            password_hash="$2y$12$uFiH7if9Kfu6//E0Svozd.Ws3B5C9r93y7/MUjoRRB93kN5hbyMkq",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    fetched = store.get_user("td")
+
+    assert fetched.username == "td"
+    assert fetched.password_hash.startswith("$2")
+    assert [user.username for user in store.list_users()] == ["td"]

@@ -11,12 +11,13 @@
 
 ## Build, Test, and Development Commands
 
-- `uv sync`: install Python dependencies into `.venv`.
+- `uv sync`: install Python dependencies into `.venv`, including `bcrypt` for HTTP Basic Auth.
 - `pnpm --dir frontend install`: install frontend dependencies.
 - `pnpm --dir frontend build`: build the Solid app into `frontend/dist/`.
 - `uv run pytest -q`: run backend tests.
 - `pnpm --dir frontend test -- --run`: run frontend tests with Vitest.
-- `PYTHONPATH=src uv run python -m allhands_host.main --vapid_public_key="$VAPID_PUBLIC_KEY" --vapid_private_key="$VAPID_PRIVATE_KEY"`: start the server locally.
+- `PYTHONPATH=src uv run python -m allhands_host.main --vapid_public_key="$VAPID_PUBLIC_KEY" --vapid_private_key="$VAPID_PRIVATE_KEY"`: start the server locally with the default HTTP Basic Auth user `td`.
+- `PYTHONPATH=src uv run python -m allhands_host.main --default-username="$ALLHANDS_USERNAME" --default-password="$ALLHANDS_PASSWORD"`: override the bootstrapped HTTP Basic Auth credentials when needed.
 
 ## Coding Style & Naming Conventions
 
@@ -40,4 +41,5 @@
 ## Security & Configuration Tips
 
 - Keep VAPID keys in local shell config such as `.envrc`; generate them with `./scripts/generate-vapid-keys`.
+- The backend seeds a default HTTP Basic Auth user on startup. Override `--default-username` and `--default-password` outside local development instead of relying on the repository defaults.
 - Do not commit `.envrc`, `.venv`, local SQLite files, or any secret values.

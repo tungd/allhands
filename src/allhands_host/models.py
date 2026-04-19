@@ -62,3 +62,11 @@ class CodexSessionRecord:
     pending_request_payload: dict | None
     created_at: str
     updated_at: str
+
+
+@dataclass(frozen=True)
+class UserRecord:
+    username: str
+    password_hash: str
+    created_at: str
+    updated_at: str

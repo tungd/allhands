@@ -5,6 +5,7 @@ description = "Single-user ACP mobile host"
 requires-python = ">=3.12"
 dependencies = [
   "agent-client-protocol>=0.1.0",
+  "bcrypt>=4.2",
   "pywebpush>=2.0.3",
   "tornado>=6.4",
 ]

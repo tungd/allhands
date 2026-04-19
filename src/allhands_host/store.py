@@ -1,7 +1,7 @@
 import json
 
 from allhands_host.db import Database
-from allhands_host.models import CodexSessionRecord, EventRecord, SessionRecord, utc_now
+from allhands_host.models import CodexSessionRecord, EventRecord, SessionRecord, UserRecord, utc_now
 
 _UNSET = object()
 
@@ -368,3 +368,51 @@ class SessionStore:
             raise KeyError(session_id)
         payload = json.loads(row["payload_json"])
         return payload["agentSessionId"]
+
+
+class UserStore:
+    def __init__(self, db: Database):
+        self.db = db
+
+    def upsert_user(self, user: UserRecord) -> None:
+        with self.db.connect() as connection:
+            connection.execute(
+                """
+                insert into users (username, password_hash, created_at, updated_at)
+                values (?, ?, ?, ?)
+                on conflict(username) do update set
+                  password_hash = excluded.password_hash,
+                  updated_at = excluded.updated_at
+                """,
+                (
+                    user.username,
+                    user.password_hash,
+                    user.created_at,
+                    user.updated_at,
+                ),
+            )
+
+    def get_user(self, username: str) -> UserRecord:
+        with self.db.connect() as connection:
+            row = connection.execute(
+                """
+                select username, password_hash, created_at, updated_at
+                from users
+                where username = ?
+                """,
+                (username,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(username)
+        return UserRecord(**dict(row))
+
+    def list_users(self) -> list[UserRecord]:
+        with self.db.connect() as connection:
+            rows = connection.execute(
+                """
+                select username, password_hash, created_at, updated_at
+                from users
+                order by username asc
+                """
+            ).fetchall()
+        return [UserRecord(**dict(row)) for row in rows]

@@ -14,9 +14,13 @@ def test_load_settings_exposes_codex_app_server_defaults():
         vapid_private_key="priv",
         codex_app_server_port=21992,
         codex_binary="codex",
+        default_username="td",
+        default_password="8mGu57TILp27qVRDNi6O",
     )
 
     settings = load_settings(opts)
 
     assert getattr(settings, "codex_app_server_port", None) == 21992
     assert getattr(settings, "codex_binary", None) == "codex"
+    assert settings.default_username == "td"
+    assert settings.default_password == "8mGu57TILp27qVRDNi6O"

@@ -28,3 +28,19 @@ def test_database_connect_closes_connection_after_context(monkeypatch):
         assert connection is fake
 
     assert fake.close_called is True
+
+
+def test_database_migrate_creates_users_table(tmp_path: Path):
+    db = Database(tmp_path / "allhands.sqlite3")
+
+    db.migrate()
+
+    with db.connect() as connection:
+        tables = {
+            row["name"]
+            for row in connection.execute(
+                "select name from sqlite_master where type = 'table'"
+            ).fetchall()
+        }
+
+    assert "users" in tables

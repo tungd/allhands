@@ -14,6 +14,8 @@ class Settings:
     vapid_private_key: str
     codex_app_server_port: int
     codex_binary: str
+    default_username: str = "td"
+    default_password: str = "8mGu57TILp27qVRDNi6O"
 
 
 _OPTIONS_DEFINED = False
@@ -32,6 +34,8 @@ def define_options() -> None:
     define("vapid_private_key", default="", help="Web Push VAPID private key")
     define("codex_app_server_port", default=21992, type=int, help="Loopback port for shared codex app-server")
     define("codex_binary", default="codex", help="Codex CLI binary")
+    define("default_username", default="td", help="Default HTTP Basic Auth username")
+    define("default_password", default="8mGu57TILp27qVRDNi6O", help="Default HTTP Basic Auth password")
     _OPTIONS_DEFINED = True
 
 
@@ -50,4 +54,6 @@ def load_settings(opts=options) -> Settings:
         vapid_private_key=opts.vapid_private_key,
         codex_app_server_port=opts.codex_app_server_port,
         codex_binary=opts.codex_binary,
+        default_username=opts.default_username,
+        default_password=opts.default_password,
     )

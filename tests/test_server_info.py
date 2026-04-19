@@ -1,5 +1,7 @@
+import base64
 import json
 from pathlib import Path
+import tempfile
 
 from tornado.testing import AsyncHTTPTestCase
 
@@ -8,10 +10,18 @@ from allhands_host.config import Settings
 
 
 class ServerInfoHandlerTest(AsyncHTTPTestCase):
+    def setUp(self):
+        self.state_dir = tempfile.TemporaryDirectory()
+        super().setUp()
+
+    def tearDown(self):
+        super().tearDown()
+        self.state_dir.cleanup()
+
     def get_app(self):
         settings = Settings(
             project_root=Path("/tmp/projects"),
-            database_path=Path("/tmp/allhands.sqlite3"),
+            database_path=Path(self.state_dir.name) / "allhands.sqlite3",
             host="127.0.0.1",
             port=21991,
             vapid_public_key="pub",
@@ -22,7 +32,8 @@ class ServerInfoHandlerTest(AsyncHTTPTestCase):
         return build_app(settings=settings)
 
     def test_server_info(self):
-        response = self.fetch("/server-info")
+        token = base64.b64encode(b"td:8mGu57TILp27qVRDNi6O").decode("ascii")
+        response = self.fetch("/server-info", headers={"Authorization": f"Basic {token}"})
         payload = json.loads(response.body)
         assert response.code == 200
         assert payload["projectRoot"] == "/tmp/projects"

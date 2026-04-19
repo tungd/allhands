@@ -1,3 +1,4 @@
+import base64
 import json
 from pathlib import Path
 import tempfile
@@ -6,6 +7,13 @@ from tornado.testing import AsyncHTTPTestCase
 
 from allhands_host.app import build_app
 from allhands_host.config import Settings
+from allhands_host.db import Database
+from allhands_host.store import UserStore
+
+
+def basic_auth_headers(**headers: str) -> dict[str, str]:
+    token = base64.b64encode(b"td:8mGu57TILp27qVRDNi6O").decode("ascii")
+    return {"Authorization": f"Basic {token}", **headers}
 
 
 class FakeSession:
@@ -121,13 +129,21 @@ class FakeSessionService:
 
 
 class SessionApiTest(AsyncHTTPTestCase):
+    def setUp(self):
+        self.state_dir = tempfile.TemporaryDirectory()
+        super().setUp()
+
+    def tearDown(self):
+        super().tearDown()
+        self.state_dir.cleanup()
+
     def get_app(self):
         self.notification_service = FakeNotificationService()
         self.session_service = FakeSessionService()
         self.repo_catalog = FakeRepoCatalog()
         settings = Settings(
             project_root=Path("/tmp/projects"),
-            database_path=Path("/tmp/allhands.sqlite3"),
+            database_path=Path(self.state_dir.name) / "allhands.sqlite3",
             host="127.0.0.1",
             port=21991,
             vapid_public_key="pub",
@@ -146,6 +162,7 @@ class SessionApiTest(AsyncHTTPTestCase):
         response = self.fetch(
             "/sessions",
             method="POST",
+            headers=basic_auth_headers(),
             body=json.dumps(
                 {
                     "launcher": "codex",
@@ -159,8 +176,23 @@ class SessionApiTest(AsyncHTTPTestCase):
         assert payload["status"] == "created"
         assert payload["id"].startswith("session_")
 
+    def test_default_user_is_created_on_startup(self):
+        user = UserStore(Database(Path(self.state_dir.name) / "allhands.sqlite3")).get_user("td")
+
+        assert user.username == "td"
+        assert user.password_hash.startswith("$2")
+
+    def test_non_health_routes_require_basic_auth(self):
+        response = self.fetch("/server-info")
+
+        assert response.code == 401
+        assert response.headers["WWW-Authenticate"] == 'Basic realm="All Hands"'
+
     def test_session_events_stream_replays_events(self):
-        response = self.fetch("/sessions/session_123/events", headers={"Last-Event-ID": "0"})
+        response = self.fetch(
+            "/sessions/session_123/events",
+            headers={**basic_auth_headers(), "Last-Event-ID": "0"},
+        )
 
         body = response.body.decode()
         assert response.code == 200
@@ -169,14 +201,14 @@ class SessionApiTest(AsyncHTTPTestCase):
         assert "event: session.created" in body
 
     def test_session_timeline_snapshot_returns_json(self):
-        response = self.fetch("/sessions/session_123/timeline")
+        response = self.fetch("/sessions/session_123/timeline", headers=basic_auth_headers())
         payload = json.loads(response.body)
 
         assert response.code == 200
         assert payload["events"][0]["type"] == "session.created"
 
     def test_reset_endpoint_returns_updated_projection(self):
-        response = self.fetch("/sessions/session_123/reset", method="POST", body="{}")
+        response = self.fetch("/sessions/session_123/reset", method="POST", headers=basic_auth_headers(), body="{}")
         payload = json.loads(response.body)
 
         assert response.code == 200
@@ -192,7 +224,7 @@ class SessionApiTest(AsyncHTTPTestCase):
             "cwd": "/tmp/projects/api/.worktrees/session_123",
         }
 
-        response = self.fetch("/sessions/session_123")
+        response = self.fetch("/sessions/session_123", headers=basic_auth_headers())
         payload = json.loads(response.body)
 
         assert response.code == 200
@@ -200,7 +232,12 @@ class SessionApiTest(AsyncHTTPTestCase):
         assert payload["pendingApproval"]["command"] == ["npm", "test"]
 
     def test_approve_endpoint_resolves_pending_approval(self):
-        response = self.fetch("/sessions/session_123/approval/approve", method="POST", body="{}")
+        response = self.fetch(
+            "/sessions/session_123/approval/approve",
+            method="POST",
+            headers=basic_auth_headers(),
+            body="{}",
+        )
         payload = json.loads(response.body)
 
         assert response.code == 200
@@ -211,11 +248,13 @@ class SessionApiTest(AsyncHTTPTestCase):
         app_seen = self.fetch(
             "/seen/app",
             method="POST",
+            headers=basic_auth_headers(),
             body=json.dumps({"lastSeenAt": "2026-04-18T00:01:00+00:00"}),
         )
         session_seen = self.fetch(
             "/sessions/session_123/seen",
             method="POST",
+            headers=basic_auth_headers(),
             body=json.dumps({"lastSeenEventSeq": 4}),
         )
 
@@ -228,6 +267,7 @@ class SessionApiTest(AsyncHTTPTestCase):
         response = self.fetch(
             "/push/subscriptions",
             method="POST",
+            headers=basic_auth_headers(),
             body=json.dumps(
                 {
                     "endpoint": "https://example.invalid/subscription",
@@ -245,7 +285,7 @@ class SessionApiTest(AsyncHTTPTestCase):
         ]
 
     def test_repo_discovery_returns_results(self):
-        response = self.fetch("/repos?query=api")
+        response = self.fetch("/repos?query=api", headers=basic_auth_headers())
         payload = json.loads(response.body)
 
         assert response.code == 200
@@ -255,6 +295,7 @@ class SessionApiTest(AsyncHTTPTestCase):
 
 class FrontendShellTest(AsyncHTTPTestCase):
     def setUp(self):
+        self.state_dir = tempfile.TemporaryDirectory()
         self.frontend_dist = tempfile.TemporaryDirectory()
         dist_path = Path(self.frontend_dist.name)
         (dist_path / "assets").mkdir()
@@ -265,12 +306,13 @@ class FrontendShellTest(AsyncHTTPTestCase):
 
     def tearDown(self):
         super().tearDown()
+        self.state_dir.cleanup()
         self.frontend_dist.cleanup()
 
     def get_app(self):
         settings = Settings(
             project_root=Path("/tmp/projects"),
-            database_path=Path("/tmp/allhands.sqlite3"),
+            database_path=Path(self.state_dir.name) / "allhands.sqlite3",
             host="127.0.0.1",
             port=21991,
             vapid_public_key="pub",
@@ -286,28 +328,34 @@ class FrontendShellTest(AsyncHTTPTestCase):
             frontend_dist=Path(self.frontend_dist.name),
         )
 
-    def test_root_serves_frontend_shell(self):
+    def test_root_requires_basic_auth(self):
         response = self.fetch("/")
+
+        assert response.code == 401
+        assert response.headers["WWW-Authenticate"] == 'Basic realm="All Hands"'
+
+    def test_root_serves_frontend_shell(self):
+        response = self.fetch("/", headers=basic_auth_headers())
 
         assert response.code == 200
         assert response.headers["Content-Type"].startswith("text/html")
         assert "All Hands UI" in response.body.decode()
 
     def test_control_room_route_falls_back_to_index(self):
-        response = self.fetch("/control-room")
+        response = self.fetch("/control-room", headers=basic_auth_headers())
 
         assert response.code == 200
         assert "All Hands UI" in response.body.decode()
 
     def test_control_room_new_route_falls_back_to_index(self):
-        response = self.fetch("/control-room/new")
+        response = self.fetch("/control-room/new", headers=basic_auth_headers())
 
         assert response.code == 200
         assert "All Hands UI" in response.body.decode()
 
     def test_pwa_assets_are_served(self):
-        manifest = self.fetch("/manifest.webmanifest")
-        service_worker = self.fetch("/sw.js")
+        manifest = self.fetch("/manifest.webmanifest", headers=basic_auth_headers())
+        service_worker = self.fetch("/sw.js", headers=basic_auth_headers())
 
         assert manifest.code == 200
         assert '"name":"All Hands"' in manifest.body.decode()
