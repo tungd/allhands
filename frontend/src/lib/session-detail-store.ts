@@ -82,12 +82,58 @@ function applyEventToDetail(
   }
 }
 
-async function markLatestSeen(sessionId: string, events: TimelineEvent[]) {
-  const newest = events.at(-1);
-  if (newest == null) {
-    return;
-  }
-  await markSessionSeen(sessionId, newest.seq);
+/** Trailing seen marker - batches bursts and only posts the newest cursor. */
+function createSeenMarker(sessionId: string, delayMs = 500) {
+  let pendingSeq: number | null = null;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let inFlightSeq: number | null = null;
+  let lastSentSeq = 0;
+
+  const flush = async () => {
+    timeoutId = null;
+    if (inFlightSeq != null) {
+      return;
+    }
+    const seq = pendingSeq;
+    if (seq == null || seq <= lastSentSeq) {
+      pendingSeq = null;
+      return;
+    }
+    pendingSeq = null;
+    inFlightSeq = seq;
+    try {
+      await markSessionSeen(sessionId, seq);
+      lastSentSeq = seq;
+    } catch {
+      pendingSeq = pendingSeq == null ? seq : Math.max(pendingSeq, seq);
+    } finally {
+      inFlightSeq = null;
+      if (pendingSeq != null && pendingSeq > lastSentSeq && timeoutId == null) {
+        timeoutId = setTimeout(() => void flush().catch(() => undefined), delayMs);
+      }
+    }
+  };
+
+  const markSeen = (seq: number) => {
+    if (!Number.isFinite(seq) || seq <= 0 || seq <= lastSentSeq) {
+      return;
+    }
+    pendingSeq = pendingSeq == null ? seq : Math.max(pendingSeq, seq);
+    if (timeoutId != null) {
+      clearTimeout(timeoutId);
+    }
+    timeoutId = setTimeout(() => void flush().catch(() => undefined), delayMs);
+  };
+
+  const cancel = () => {
+    if (timeoutId != null) {
+      clearTimeout(timeoutId);
+      timeoutId = null;
+    }
+    pendingSeq = null;
+  };
+
+  return { markSeen, cancel };
 }
 
 export function createSessionDetailState(
@@ -97,6 +143,7 @@ export function createSessionDetailState(
   const [detail, setDetail] = createSignal<SessionDetail | null>(initial.detail ?? null);
   const [timeline, setTimeline] = createSignal<TimelineEvent[]>(initial.timeline ?? []);
   const [rawMode, setRawMode] = createSignal(false);
+  const seenMarker = createSeenMarker(sessionId, 500);
 
   async function refreshDetail() {
     const next = await getSession(sessionId);
@@ -107,7 +154,7 @@ export function createSessionDetailState(
   async function refreshTimeline() {
     const snapshot = await listTimeline(sessionId);
     setTimeline(snapshot.events);
-    await markLatestSeen(sessionId, snapshot.events);
+    seenMarker.markSeen(snapshot.events.at(-1)?.seq ?? 0);
     return snapshot.events;
   }
 
@@ -120,7 +167,7 @@ export function createSessionDetailState(
         if (initial.timeline == null) {
           await refreshTimeline();
         } else {
-          await markLatestSeen(sessionId, initial.timeline);
+          seenMarker.markSeen(initial.timeline.at(-1)?.seq ?? 0);
         }
       } catch {
         return;
@@ -140,10 +187,11 @@ export function createSessionDetailState(
         }
       ]);
       setDetail((current) => applyEventToDetail(current, { type: event.type, payload }));
-      void markSessionSeen(sessionId, nextSeq).catch(() => undefined);
+      seenMarker.markSeen(nextSeq);
     });
 
     onCleanup(() => {
+      seenMarker.cancel();
       unsubscribe();
     });
   });
