@@ -72,7 +72,8 @@ class BasicAuthMixin:
         user = authenticator.authenticate(self.request.headers.get("Authorization"))
         if user is None:
             self.set_status(401)
-            self.set_header("WWW-Authenticate", f'Basic realm="{REALM}"')
+            # Don't send WWW-Authenticate header - frontend handles auth via login page
+            # Sending the header triggers browser's native Basic Auth popup
             self.finish({"error": "authentication required"})
             raise tornado.web.Finish()
         self._current_user = user

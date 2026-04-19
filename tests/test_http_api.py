@@ -186,7 +186,7 @@ class SessionApiTest(AsyncHTTPTestCase):
         response = self.fetch("/server-info")
 
         assert response.code == 401
-        assert response.headers["WWW-Authenticate"] == 'Basic realm="All Hands"'
+        # No WWW-Authenticate header - frontend handles auth via login page
 
     def test_session_events_stream_replays_events(self):
         response = self.fetch(
