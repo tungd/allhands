@@ -79,3 +79,52 @@ test("renders codex approval card and action buttons", () => {
   expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Deny" })).toBeTruthy();
 });
+
+test("renders agent timeline messages as markdown", () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({})
+    })
+  );
+  vi.stubGlobal("EventSource", FakeEventSource);
+
+  const { container } = render(() => (
+    <SessionRoute
+      sessionId="session-1"
+      initialDetail={{
+        id: "session-1",
+        title: "API Refactor",
+        runState: "running",
+        workspaceState: "ready"
+      }}
+      initialTimeline={[
+        {
+          seq: 1,
+          type: "codex.item.completed",
+          payload: {
+            item: {
+              role: "assistant",
+              type: "message",
+              content: [
+                {
+                  type: "output_text",
+                  text: "# Ship plan\n\n- run tests\n- inspect logs\n\nUse `rg` instead of grep.\n\n<script>alert(1)</script>"
+                }
+              ]
+            }
+          },
+          createdAt: "2026-04-18T00:00:00+00:00"
+        }
+      ]}
+    />
+  ));
+
+  expect(screen.getByRole("heading", { name: "Ship plan" })).toBeTruthy();
+  expect(screen.getByText("run tests")).toBeTruthy();
+  expect(screen.getByText("inspect logs")).toBeTruthy();
+  expect(container.querySelector("code")?.textContent).toBe("rg");
+  expect(screen.getByText("<script>alert(1)</script>")).toBeTruthy();
+  expect(container.querySelector("script")).toBeNull();
+});

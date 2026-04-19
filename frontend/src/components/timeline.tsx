@@ -1,9 +1,10 @@
 import { For } from "solid-js";
 
+import { MarkdownContent } from "./markdown-content";
 import styles from "./timeline.module.css";
 
 export type TimelineProps = {
-  items: Array<{ seq: number; type: string; body: string; raw?: string; createdAt?: string }>;
+  items: Array<{ seq: number; type: string; body: string; markdown?: string; raw?: string; createdAt?: string }>;
   rawMode: boolean;
   onToggleMode: () => void;
 };
@@ -24,7 +25,9 @@ export function Timeline(props: TimelineProps) {
               <span>#{item.seq}</span>
               <span>{item.createdAt ?? ""}</span>
             </div>
-            <div>{props.rawMode ? item.raw ?? item.type : item.body}</div>
+            <div class={item.markdown != null && !props.rawMode ? styles.markdown : undefined}>
+              {props.rawMode ? item.raw ?? item.type : item.markdown != null ? <MarkdownContent text={item.markdown} /> : item.body}
+            </div>
           </article>
         )}
       </For>
