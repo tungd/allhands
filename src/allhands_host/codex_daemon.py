@@ -71,7 +71,7 @@ class CodexDaemonManager:
                 )
                 if response.code == 200:
                     return True
-            except HTTPClientError:
+            except (HTTPClientError, OSError):
                 continue
         return False
 
