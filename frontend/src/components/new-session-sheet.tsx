@@ -35,6 +35,7 @@ export function NewSessionSheet(props: NewSessionSheetProps) {
   return (
     <div class={styles.backdrop}>
       <section aria-label="New session" aria-modal="true" class={styles.sheet} role="dialog">
+        <div aria-hidden="true" class={styles.handle} data-testid="sheet-handle" />
         <div class={styles.header}>
           <h3>New session</h3>
           <button class={styles.close} type="button" onClick={props.onClose}>

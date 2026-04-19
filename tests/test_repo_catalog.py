@@ -52,3 +52,20 @@ def test_filters_repo_names_and_paths(tmp_path: Path):
 
     assert [repo.name for repo in catalog.list_repos("front")] == ["frontend-web"]
     assert [repo.name for repo in catalog.list_repos("backend")] == ["backend-api"]
+
+
+def test_ignores_nested_git_repos_when_parent_repo_exists(tmp_path: Path):
+    root = tmp_path / "projects"
+    parent = root / "monorepo"
+    nested = parent / "packages" / "mobile"
+    parent.mkdir(parents=True)
+    nested.mkdir(parents=True)
+    init_repo(parent)
+    init_repo(nested)
+
+    catalog = RepoCatalog(root)
+
+    repos = catalog.list_repos()
+
+    assert [repo.name for repo in repos] == ["monorepo"]
+    assert [repo.path for repo in repos] == [str(parent.resolve())]

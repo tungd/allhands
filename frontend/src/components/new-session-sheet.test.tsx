@@ -30,6 +30,7 @@ test("focuses the repo search field and disables submit until the form is valid"
 
   const search = screen.getByLabelText("Repository");
   expect(document.activeElement).toBe(search);
+  expect(screen.getByTestId("sheet-handle")).toBeTruthy();
   expect((screen.getByRole("button", { name: "Create session" }) as HTMLButtonElement).disabled).toBe(true);
 });
 
