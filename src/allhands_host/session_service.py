@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 from dataclasses import asdict, replace
 from pathlib import Path
 
@@ -26,6 +28,7 @@ class SessionService:
         self.launcher_catalog = launcher_catalog or LauncherCatalog(settings.project_root)
         self.notification_service = notification_service
         self.attachments: dict[str, Attachment] = {}
+        self._bootstrap_tasks: set[asyncio.Task[None]] = set()
 
     async def create_session(self, launcher: str, repo_path: str, prompt: str) -> SessionRecord:
         repo = Path(repo_path).resolve()
@@ -34,31 +37,10 @@ class SessionService:
             repo_path=str(repo),
             worktree_path=str(repo),
         )
-        worktree_path = self.worktree_manager.create(repo, session_id=seed.id)
-        session = replace(seed, worktree_path=str(worktree_path))
+        session = replace(seed, worktree_path=str(repo.parent / ".worktrees" / seed.id))
         self.store.create_session(session)
         self.store.append_event(session.id, "session.created", {"status": session.status})
-        command = self.launcher_catalog.get(launcher).build_start_command(
-            repo_path=repo,
-            worktree_path=worktree_path,
-            prompt=prompt,
-        )
-        attachment = await attach_and_initialize(
-            session=session,
-            store=self.store,
-            argv=command.argv,
-            cwd=command.cwd,
-        )
-        self.attachments[session.id] = attachment
-        self.store.append_event(session.id, "session.bound", {"agentSessionId": attachment.agent_session_id})
-        self.store.update_session_projection(
-            session.id,
-            status="running",
-            workspace_state="ready",
-            last_bound_agent_session_id=attachment.agent_session_id,
-            active_notification_kind="none",
-        )
-        await self.prompt(session.id, prompt)
+        self._track_bootstrap(self._bootstrap_session(session, prompt))
         return self.store.get_session(session.id)
 
     def list_sessions(self) -> list[dict]:
@@ -131,7 +113,7 @@ class SessionService:
         session = self.store.get_session(session_id)
         repo_path = Path(session.repo_path)
         if session.workspace_state == "missing":
-            self.worktree_manager.create(repo_path, session.id)
+            await asyncio.to_thread(self.worktree_manager.create, repo_path, session.id)
             self.store.append_event(session.id, "workspace.recreated", {})
         session_token = session.last_bound_agent_session_id or self.store.last_bound_agent_session_id(session_id)
         command = self.launcher_catalog.get(session.launcher).build_resume_command(session_token=session_token)
@@ -169,7 +151,7 @@ class SessionService:
         attachment = self.attachments.pop(session_id, None)
         if attachment is not None:
             await attachment.cancel()
-        self.worktree_manager.remove(Path(session.repo_path), Path(session.worktree_path))
+        await asyncio.to_thread(self.worktree_manager.remove, Path(session.repo_path), Path(session.worktree_path))
         self.store.append_event(session_id, "workspace.reset", {})
         return self.store.update_session_projection(
             session_id,
@@ -193,6 +175,51 @@ class SessionService:
         except KeyError:
             token = None
         return "resume_available" if token else "detached"
+
+    def _track_bootstrap(self, coro) -> None:
+        task = asyncio.create_task(coro)
+        self._bootstrap_tasks.add(task)
+        task.add_done_callback(self._bootstrap_tasks.discard)
+
+    async def _bootstrap_session(self, session: SessionRecord, prompt: str) -> None:
+        repo_path = Path(session.repo_path)
+        worktree_path = Path(session.worktree_path)
+        attachment: Attachment | None = None
+
+        try:
+            await asyncio.to_thread(self.worktree_manager.create, repo_path, session.id)
+            command = self.launcher_catalog.get(session.launcher).build_start_command(
+                repo_path=repo_path,
+                worktree_path=worktree_path,
+                prompt=prompt,
+            )
+            attachment = await attach_and_initialize(
+                session=session,
+                store=self.store,
+                argv=command.argv,
+                cwd=command.cwd,
+            )
+            self.attachments[session.id] = attachment
+            self.store.append_event(session.id, "session.bound", {"agentSessionId": attachment.agent_session_id})
+            self.store.update_session_projection(
+                session.id,
+                status="running",
+                workspace_state="ready",
+                last_bound_agent_session_id=attachment.agent_session_id,
+                active_notification_kind="none",
+            )
+            await self.prompt(session.id, prompt)
+        except Exception as exc:
+            if attachment is not None:
+                with contextlib.suppress(Exception):
+                    await attachment.cancel()
+            self.attachments.pop(session.id, None)
+            self.store.append_event(session.id, "session.failed", {"error": str(exc)})
+            self.store.update_session_projection(
+                session.id,
+                status="failed",
+                active_notification_kind="none",
+            )
 
     def _notify_attention_required(self, session: SessionRecord, newest_event_seq: int, message: str) -> None:
         if self.notification_service is None:

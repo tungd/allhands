@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 import sys
 
@@ -32,3 +33,28 @@ async def test_attachment_records_initialize_and_prompt_events(tmp_path: Path):
         "acp.initialized",
         "acp.thought",
     ]
+
+
+@pytest.mark.asyncio
+async def test_attachment_fails_fast_when_agent_exits_before_initialize(tmp_path: Path):
+    db = Database(tmp_path / "allhands.sqlite3")
+    db.migrate()
+    store = SessionStore(db)
+    session = SessionRecord.new("codex", "/tmp/repo", "/tmp/repo/.worktrees/session_1")
+    store.create_session(session)
+
+    with pytest.raises(RuntimeError, match="unexpected argument '--experimental-acp' found"):
+        await asyncio.wait_for(
+            attach_and_initialize(
+                session=session,
+                store=store,
+                argv=[
+                    sys.executable,
+                    "-c",
+                    "import sys; sys.stderr.write(\"error: unexpected argument '--experimental-acp' found\\n\");"
+                    " sys.stderr.flush(); sys.exit(2)",
+                ],
+                cwd=tmp_path,
+            ),
+            timeout=1,
+        )

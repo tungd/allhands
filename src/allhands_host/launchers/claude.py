@@ -13,7 +13,7 @@ class ClaudeLauncher(Launcher):
         prompt: str,
     ) -> LaunchCommand:
         return LaunchCommand(
-            argv=["claude", "--experimental-acp", "--prompt", prompt],
+            argv=["claude", "--experimental-acp"],
             cwd=worktree_path,
         )
 

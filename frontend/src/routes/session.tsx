@@ -9,12 +9,16 @@ import type { SessionDetail, TimelineEvent } from "../lib/api";
 
 function describeTimelineEvent(event: TimelineEvent): string {
   switch (event.type) {
+    case "session.created":
+      return "Session created";
     case "workspace.reset":
       return "Workspace reset";
     case "workspace.recreated":
       return "Workspace recreated";
     case "session.completed":
       return "Session completed";
+    case "session.failed":
+      return String(event.payload.error ?? "Session failed");
     case "session.attention_required":
       return String(event.payload.message ?? "Agent needs attention");
     case "session.cancelled":
@@ -58,6 +62,7 @@ export function SessionRoute(props: {
         onToggleMode={() => state.setRawMode((current) => !current)}
       />
       <SessionActions
+        disabled={state.actionsDisabled()}
         onResume={() => void state.resume()}
         onCancel={() => void state.cancel()}
         onReset={() => void state.reset()}

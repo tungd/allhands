@@ -28,7 +28,13 @@ export function applyEvent(state: SessionState, event: SessionEvent): SessionSta
       ? {
           ...session,
           status:
-            event.type === "session.attention_required"
+            event.type === "session.bound"
+              ? "running"
+              : event.type === "session.cancelled"
+                ? "resume_available"
+                : event.type === "session.failed"
+                  ? "failed"
+                  : event.type === "session.attention_required"
               ? "attention_required"
               : event.type === "session.completed"
                 ? "completed"
@@ -36,7 +42,13 @@ export function applyEvent(state: SessionState, event: SessionEvent): SessionSta
                   ? "archived"
                   : session.status,
           runState:
-            event.type === "session.attention_required"
+            event.type === "session.bound"
+              ? "running"
+              : event.type === "session.cancelled"
+                ? "resume_available"
+                : event.type === "session.failed"
+                  ? "failed"
+                  : event.type === "session.attention_required"
               ? "attention_required"
               : event.type === "session.completed"
                 ? "completed"

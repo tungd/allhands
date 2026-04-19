@@ -108,12 +108,14 @@ export function createSessionDetailState(
   });
 
   const promptDisabled = createMemo(() => detail()?.runState !== "running");
+  const actionsDisabled = createMemo(() => detail()?.runState === "created");
 
   return {
     detail,
     timeline,
     rawMode,
     setRawMode,
+    actionsDisabled,
     promptDisabled,
     sendPrompt: (prompt: string) => sendPrompt(sessionId, prompt),
     resume: async () => {
