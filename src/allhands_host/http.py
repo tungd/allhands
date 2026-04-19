@@ -83,10 +83,6 @@ class AuthenticatedHandler(BasicAuthMixin, tornado.web.RequestHandler):
     pass
 
 
-class AuthenticatedStaticFileHandler(BasicAuthMixin, tornado.web.StaticFileHandler):
-    pass
-
-
 class ServerInfoHandler(AuthenticatedHandler):
     def initialize(self, settings: Settings) -> None:
         self.settings_obj = settings
@@ -278,7 +274,7 @@ class SessionSeenHandler(AuthenticatedHandler):
         self.set_status(204)
 
 
-class FrontendShellHandler(AuthenticatedHandler):
+class FrontendShellHandler(tornado.web.RequestHandler):
     def initialize(self, frontend_dist: Path) -> None:
         self.index_path = Path(frontend_dist) / "index.html"
 

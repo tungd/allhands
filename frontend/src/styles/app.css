@@ -10,8 +10,28 @@ body {
   padding: 20px;
 }
 
+.app-shell-auth {
+  display: grid;
+  place-items: center;
+}
+
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+.topbar nav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.topbar-button {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font: inherit;
 }

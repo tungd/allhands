@@ -1,6 +1,6 @@
 import { createEffect, createSignal, onCleanup, onMount } from "solid-js";
 
-import { listSessions, markAppSeen, type SessionSummary } from "./api";
+import { getServerInfo, listSessions, markAppSeen, type SessionSummary } from "./api";
 import { subscribeToSession } from "./events";
 import { maybeEnableNotifications } from "./push";
 
@@ -75,19 +75,28 @@ export function createSessionsState(vapidPublicKey = "") {
   const [state, setState] = createSignal<SessionState>({ sessions: [] });
 
   onMount(async () => {
-    const next = await listSessions();
-    await maybeEnableNotifications({
-      previousCount: state().sessions.length,
-      nextCount: next.sessions.length,
-      vapidPublicKey
-    });
-    setState(next);
+    try {
+      const [next, info] = await Promise.all([
+        listSessions(),
+        vapidPublicKey
+          ? Promise.resolve({ vapidPublicKey })
+          : getServerInfo().catch(() => ({ vapidPublicKey: "" }))
+      ]);
+      await maybeEnableNotifications({
+        previousCount: state().sessions.length,
+        nextCount: next.sessions.length,
+        vapidPublicKey: info.vapidPublicKey
+      });
+      setState(next);
+    } catch {
+      setState({ sessions: [] });
+    }
   });
 
   onMount(() => {
     function markVisibleSeen() {
       if (document.visibilityState === "visible") {
-        void markAppSeen(new Date().toISOString());
+        void markAppSeen(new Date().toISOString()).catch(() => undefined);
       }
     }
 

@@ -1,3 +1,5 @@
+import { authorizedFetch } from "./http";
+
 function decodeBase64Url(value: string): Uint8Array {
   const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
   const padding = "=".repeat((4 - (normalized.length % 4)) % 4);
@@ -20,7 +22,7 @@ export async function subscribeToPush(
 }
 
 export async function registerPushSubscription(subscription: PushSubscription): Promise<void> {
-  const response = await fetch("/push/subscriptions", {
+  const response = await authorizedFetch("/push/subscriptions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(subscription.toJSON())

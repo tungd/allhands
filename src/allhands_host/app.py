@@ -7,7 +7,6 @@ from allhands_host.config import Settings, define_options, load_settings
 from allhands_host.db import Database
 from allhands_host.http import (
     AppSeenHandler,
-    AuthenticatedStaticFileHandler,
     HealthHandler,
     FrontendShellHandler,
     ReposHandler,
@@ -94,22 +93,22 @@ def build_app(
             [
                 (
                     r"/(manifest\.webmanifest)",
-                    AuthenticatedStaticFileHandler,
+                    tornado.web.StaticFileHandler,
                     {"path": str(frontend_dist)},
                 ),
                 (
                     r"/(sw\.js)",
-                    AuthenticatedStaticFileHandler,
+                    tornado.web.StaticFileHandler,
                     {"path": str(frontend_dist)},
                 ),
                 (
                     r"/assets/(.*)",
-                    AuthenticatedStaticFileHandler,
+                    tornado.web.StaticFileHandler,
                     {"path": str(frontend_dist / "assets")},
                 ),
                 (r"/", FrontendShellHandler, {"frontend_dist": frontend_dist}),
                 (
-                    r"/(control-room(?:/new)?|inbox|session/[^/]+)",
+                    r"/(login|control-room(?:/new)?|inbox|session/[^/]+)",
                     FrontendShellHandler,
                     {"frontend_dist": frontend_dist},
                 ),

@@ -113,13 +113,17 @@ export function createSessionDetailState(
 
   onMount(() => {
     void (async () => {
-      if (initial.detail == null) {
-        await refreshDetail();
-      }
-      if (initial.timeline == null) {
-        await refreshTimeline();
-      } else {
-        await markLatestSeen(sessionId, initial.timeline);
+      try {
+        if (initial.detail == null) {
+          await refreshDetail();
+        }
+        if (initial.timeline == null) {
+          await refreshTimeline();
+        } else {
+          await markLatestSeen(sessionId, initial.timeline);
+        }
+      } catch {
+        return;
       }
     })();
 
@@ -136,7 +140,7 @@ export function createSessionDetailState(
         }
       ]);
       setDetail((current) => applyEventToDetail(current, { type: event.type, payload }));
-      void markSessionSeen(sessionId, nextSeq);
+      void markSessionSeen(sessionId, nextSeq).catch(() => undefined);
     });
 
     onCleanup(() => {

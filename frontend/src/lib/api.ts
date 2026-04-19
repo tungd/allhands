@@ -39,6 +39,8 @@ export type RepoSummary = {
   path: string;
 };
 
+import { authorizedFetch } from "./http";
+
 type SessionApiRecord = {
   id: string;
   title?: string;
@@ -95,7 +97,7 @@ function normalizeSession(session: SessionApiRecord): SessionDetail {
 }
 
 async function postJson<T>(path: string, body: Record<string, unknown> = {}): Promise<T> {
-  const response = await fetch(path, {
+  const response = await authorizedFetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body)
@@ -107,7 +109,7 @@ async function postJson<T>(path: string, body: Record<string, unknown> = {}): Pr
 }
 
 export async function listSessions(): Promise<{ sessions: SessionSummary[] }> {
-  const response = await fetch("/sessions");
+  const response = await authorizedFetch("/sessions");
   if (!response.ok) {
     throw new Error("failed to load sessions");
   }
@@ -118,7 +120,7 @@ export async function listSessions(): Promise<{ sessions: SessionSummary[] }> {
 }
 
 export async function listRepos(query = ""): Promise<{ repos: RepoSummary[] }> {
-  const response = await fetch(`/repos?query=${encodeURIComponent(query)}`);
+  const response = await authorizedFetch(`/repos?query=${encodeURIComponent(query)}`);
   if (!response.ok) {
     throw new Error("failed to load repos");
   }
@@ -126,7 +128,7 @@ export async function listRepos(query = ""): Promise<{ repos: RepoSummary[] }> {
 }
 
 export async function getSession(sessionId: string): Promise<SessionDetail> {
-  const response = await fetch(`/sessions/${sessionId}`);
+  const response = await authorizedFetch(`/sessions/${sessionId}`);
   if (!response.ok) {
     throw new Error("failed to load session");
   }
@@ -134,7 +136,7 @@ export async function getSession(sessionId: string): Promise<SessionDetail> {
 }
 
 export async function listTimeline(sessionId: string): Promise<{ events: TimelineEvent[] }> {
-  const response = await fetch(`/sessions/${sessionId}/timeline`);
+  const response = await authorizedFetch(`/sessions/${sessionId}/timeline`);
   if (!response.ok) {
     throw new Error("failed to load timeline");
   }
@@ -142,7 +144,7 @@ export async function listTimeline(sessionId: string): Promise<{ events: Timelin
 }
 
 export async function sendPrompt(sessionId: string, prompt: string): Promise<void> {
-  const response = await fetch(`/sessions/${sessionId}/prompt`, {
+  const response = await authorizedFetch(`/sessions/${sessionId}/prompt`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ prompt })
@@ -191,7 +193,7 @@ export async function denySessionApproval(sessionId: string): Promise<SessionDet
 }
 
 export async function markSessionSeen(sessionId: string, lastSeenEventSeq: number): Promise<void> {
-  const response = await fetch(`/sessions/${sessionId}/seen`, {
+  const response = await authorizedFetch(`/sessions/${sessionId}/seen`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ lastSeenEventSeq })
@@ -202,7 +204,7 @@ export async function markSessionSeen(sessionId: string, lastSeenEventSeq: numbe
 }
 
 export async function markAppSeen(lastSeenAt: string): Promise<void> {
-  const response = await fetch("/seen/app", {
+  const response = await authorizedFetch("/seen/app", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ lastSeenAt })
@@ -218,7 +220,7 @@ export async function getServerInfo(): Promise<{
   projectRoot: string;
   transport: string;
 }> {
-  const response = await fetch("/server-info");
+  const response = await authorizedFetch("/server-info");
   if (!response.ok) {
     throw new Error("failed to load server info");
   }

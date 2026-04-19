@@ -299,6 +299,7 @@ class FrontendShellTest(AsyncHTTPTestCase):
         self.frontend_dist = tempfile.TemporaryDirectory()
         dist_path = Path(self.frontend_dist.name)
         (dist_path / "assets").mkdir()
+        (dist_path / "assets" / "app.js").write_text('console.log("All Hands");')
         (dist_path / "index.html").write_text("<!doctype html><html><body>All Hands UI</body></html>")
         (dist_path / "manifest.webmanifest").write_text('{"name":"All Hands"}')
         (dist_path / "sw.js").write_text('self.addEventListener("push", () => {});')
@@ -328,36 +329,39 @@ class FrontendShellTest(AsyncHTTPTestCase):
             frontend_dist=Path(self.frontend_dist.name),
         )
 
-    def test_root_requires_basic_auth(self):
+    def test_root_serves_frontend_shell_without_auth(self):
         response = self.fetch("/")
-
-        assert response.code == 401
-        assert response.headers["WWW-Authenticate"] == 'Basic realm="All Hands"'
-
-    def test_root_serves_frontend_shell(self):
-        response = self.fetch("/", headers=basic_auth_headers())
 
         assert response.code == 200
         assert response.headers["Content-Type"].startswith("text/html")
         assert "All Hands UI" in response.body.decode()
 
+    def test_login_route_falls_back_to_index(self):
+        response = self.fetch("/login")
+
+        assert response.code == 200
+        assert "All Hands UI" in response.body.decode()
+
     def test_control_room_route_falls_back_to_index(self):
-        response = self.fetch("/control-room", headers=basic_auth_headers())
+        response = self.fetch("/control-room")
 
         assert response.code == 200
         assert "All Hands UI" in response.body.decode()
 
     def test_control_room_new_route_falls_back_to_index(self):
-        response = self.fetch("/control-room/new", headers=basic_auth_headers())
+        response = self.fetch("/control-room/new")
 
         assert response.code == 200
         assert "All Hands UI" in response.body.decode()
 
-    def test_pwa_assets_are_served(self):
-        manifest = self.fetch("/manifest.webmanifest", headers=basic_auth_headers())
-        service_worker = self.fetch("/sw.js", headers=basic_auth_headers())
+    def test_pwa_assets_are_served_without_auth(self):
+        manifest = self.fetch("/manifest.webmanifest")
+        service_worker = self.fetch("/sw.js")
+        javascript = self.fetch("/assets/app.js")
 
         assert manifest.code == 200
         assert '"name":"All Hands"' in manifest.body.decode()
         assert service_worker.code == 200
         assert "self.addEventListener" in service_worker.body.decode()
+        assert javascript.code == 200
+        assert 'console.log("All Hands")' in javascript.body.decode()
