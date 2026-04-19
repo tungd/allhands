@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")"
+source .envrc
+
+PYTHONPATH=src uv run python -m allhands_host.main \
+  --project_root="${ALLHANDS_PROJECT_ROOT:-$HOME/Projects}" \
+  --port="${ALLHANDS_PORT:-21991}" \
+  --vapid_public_key="$VAPID_PUBLIC_KEY" \
+  --vapid_private_key="$VAPID_PRIVATE_KEY"
