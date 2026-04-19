@@ -25,6 +25,7 @@ class NoPendingApprovalError(RuntimeError):
 
 class CodexSessionAdapter:
     _BOOTSTRAP_IN_PROGRESS_STATUSES = {"created"}
+    _TERMINAL_STATUSES = {"failed", "completed", "cancelled", "archived"}
 
     def __init__(
         self,
@@ -89,6 +90,8 @@ class CodexSessionAdapter:
             codex = self.store.get_codex_session(session.id)
         except KeyError:
             if session.status in self._BOOTSTRAP_IN_PROGRESS_STATUSES:
+                return self.store.get_session(session.id)
+            if session.status in self._TERMINAL_STATUSES:
                 return self.store.get_session(session.id)
             raise
         client = await self._open_client(session.id)

@@ -92,7 +92,7 @@ class CodexAppServerClient:
                 "threadId": thread_id,
                 "input": input_items,
                 "cwd": cwd,
-                "approvalPolicy": "unlessTrusted",
+                "approvalPolicy": "on-request",
                 "approvalsReviewer": "user",
                 "sandboxPolicy": {
                     "type": "workspaceWrite",
