@@ -1,3 +1,5 @@
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 import sqlite3
 
@@ -56,10 +58,15 @@ class Database:
     def __init__(self, path: Path):
         self.path = path
 
-    def connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self.path)
         connection.row_factory = sqlite3.Row
-        return connection
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
 
     def migrate(self) -> None:
         with self.connect() as connection:
