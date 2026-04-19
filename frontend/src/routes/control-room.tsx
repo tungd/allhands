@@ -25,7 +25,7 @@ export function ControlRoom(props: ControlRoomProps) {
 
       <div classList={{ [styles.content]: true, [styles.dimmed]: props.sheetOpen ?? false }}>
         {focused() ? (
-          <SessionCard title={focused()!.title} status={focused()!.status} />
+          <SessionCard id={focused()!.id} title={focused()!.title} status={focused()!.status} />
         ) : (
           <article class={styles.empty}>No sessions yet</article>
         )}
